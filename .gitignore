@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Simulation outputs. Only summary.md files are tracked; plots and raw data are regenerable
+# (raw.pkl ~1.2 GB, plots ~15 MB). Share them out of band if needed.
+*.pkl
+*.png
+*.log
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
