@@ -5,6 +5,48 @@ Oct 21, 2026 · @Someone
 The previous version is kept in [`archive/PLAN_v2.md`](archive/PLAN_v2.md). This version was updated after Stage 1 runs 5–8.
 Stage 1 evidence for every change below is in [`sim/README.md`](../sim/README.md) (run log) and the `sim/results/` directories.
 
+## Status and proposed changes (Nov 13, 2026)
+
+**Done since v3: Stage 2 fuzzer skeleton** ([`fuzzer/`](../fuzzer/README.md)).
+- LibAFL 0.16.1 fuzzer: one operator family per execution (9 families), success = input added to
+  the corpus, per-batch JSONL log of family counts, P(H_T | D) and fitted log c.
+- All section 7 policies are implemented, plus `adaptive-unscaled` and `dts` (below). The model
+  comparison matches `sim/bandit_sim.py` to 1e-8 (unit test).
+- Runs end to end on libpng. Four versions are built for two transitions: 1.6.39 → 1.6.40 (small,
+  ~50 lines) and 1.6.45 → 1.6.46 (large, ~590 lines, new mDCV/cLLI chunks). The OSS-Fuzz harness
+  and dictionary are unchanged within each pair. See `fuzzer/README.md`.
+- First numbers (one 2-minute base run, indicative only): about 120k executions per second; family
+  rates from 2.5e-6 to 9.9e-5, with best/median 2.1 (just passes the week-3 gate); fitted scale on
+  1.6.46 c ≈ 0.16, matching the simulation's L ≈ 0.2 regime.
+
+**Proposed after proposal feedback (needs team agreement before it changes the sections below).**
+- **Discounted Thompson sampling (`dts`), suggested by the TA.** The transfer prior's pseudo-counts
+  decay toward calibrated fresh by γ per batch, a continuous "how much to trust the past" knob.
+  This is not the γ removed in v3: that one discounted the hypothesis-level bandit counts. `dts`
+  lowers trust on a fixed schedule; the adaptive controller lowers it only when evidence contradicts
+  the old ranking. That contrast ("time-driven vs evidence-driven trust") is a natural framing for
+  the report. Optional `gamma_data` also decays observed counts, which targets the late-riser and
+  depletion scenarios where the controller is weakest. **Next:** add `dts` to the simulator first.
+- **MOpt (Lyu et al., USENIX Security 2019) as a Stage 2 baseline:** the strongest single-campaign
+  operator scheduler, with no cross-version transfer. LibAFL has `StdMOptMutator`.
+- **Smaller Stage 2.** About 4,430 core-hours does not fit the remaining time. Proposal: libpng
+  only, 2 transitions, 1-hour campaigns, 10 trials, 5 policies (fresh, transfer, adaptive, dts,
+  MOpt), about 100 core-hours. Primary claim: "adaptive avoids transfer's collapse", which 10 trials
+  detect (section 7 power table).
+
+**New open issue: execution-rate calibration.** The simulator treats 10⁶ executions as 4 hours.
+libpng runs about 4×10⁸ executions per hour, so N=5000 and a per-batch γ tuned in simulation
+would wash out in about a second. The pilot must measure executions per second and
+per-family rates, then set N (and γ) so the prior covers the same fraction of the campaign as in
+simulation.
+
+**Next steps.**
+1. Calibrate N and γ to the real execution rate, and decide on the dictionary (it lacks the
+   mDCV/cLLI chunk names that 1.6.46 adds).
+2. `dts` in the simulator (`sim/bandit_sim.py`), compared with `bmcs_cal_r`, transfer and `mix50_cal_r`.
+3. Pilot on one libpng transition: the week-3 gate checks in section 8, plus the calibration above.
+4. MOpt policy, a fixed corpus scheduler, and an analysis script for `coverage.csv`.
+
 ## Summary
 
 We ask whether a fuzzer can benefit from mutation-operator preferences learned on version v of a

@@ -6,7 +6,9 @@ weighs both options and detects when old experience has become misleading.
 
 - **Stage 1: simulation (done).** A synthetic K-armed Bernoulli bandit stands in for mutation-operator
   families, so we control exactly how the program changes between versions. Lives in [`sim/`](sim/).
-- **Stage 2: real fuzzing (not started).** Real campaigns across several version transitions.
+- **Stage 2: real fuzzing (in progress).** Real campaigns across several version transitions.
+  The LibAFL fuzzer in [`fuzzer/`](fuzzer/) runs every policy end to end on a toy target; real
+  targets are next.
 
 > Work in progress. `sim/` is exploratory test code written before the real implementation.
 
@@ -16,6 +18,8 @@ weighs both options and detects when old experience has become misleading.
 2. [`sim/README.md`](sim/README.md): Stage 1 lab notebook. Read the **Bottom line** first, then
    **Overall conclusions** and **Proposed next steps**. The run log gives the exact command for every run.
 3. [`sim/results/final/summary.md`](sim/results/final/summary.md): tables from the consolidated final sweep.
+4. [`fuzzer/README.md`](fuzzer/README.md): the Stage 2 fuzzer: how to run a transition, policies,
+   operator families, and its next steps.
 
 ## Layout
 
@@ -27,6 +31,7 @@ weighs both options and detects when old experience has become misleading.
 │   ├── PLAN.md           current project plan (v3)
 │   └── archive/
 │       └── PLAN_v2.md    plan before the Stage 1 simulation
+├── fuzzer/               Stage 2 LibAFL fuzzer (Rust); see fuzzer/README.md
 └── sim/                  Stage 1 simulation
     ├── README.md         model, policies, scenarios, run log and findings
     ├── bandit_sim.py     simulator core: scenarios, priors, policies, statistics
