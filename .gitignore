@@ -11,6 +11,12 @@ venv/
 *.png
 *.log
 
+# Rust build output and fuzzer campaign outputs
+fuzzer/target/
+fuzzer/runs/
+fuzzer/targets/*/repo/
+fuzzer/targets/*/build/
+
 # Editors / OS
 .vscode/
 .idea/

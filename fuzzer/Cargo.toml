@@ -1,0 +1,15 @@
+[package]
+name = "fredbear"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
+libafl = "=0.16.1"
+libafl_bolts = "=0.16.1"
+libafl_targets = { version = "=0.16.1", default-features = false, features = ["std", "coverage", "sancov_pcguard_hitcounts"] }
+libm = "0.2.16"
+rand = "0.10"
+rand_distr = "0.6.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
