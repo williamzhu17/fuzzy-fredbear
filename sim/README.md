@@ -66,6 +66,7 @@ The commands in the run log below assume you are in `sim/`.
 | `run_next.sh` | Commands for runs 6–10 |
 | `final_sweep.py` | Consolidated sweep (run 10): 7 policies × (8 designed + 84 rank) scenarios × L ∈ {1, 0.5, 0.2}; resumable, slim `raw.pkl` |
 | `final_report.py` | Analysis of run 10 → `results/final/summary.md` (sections A–F, including simulated Stage 2) |
+| `recency_sweep.py` | Recency-weighted prior sweep (run 11): decay vs weight-only variants at several half-lives, including the drift scenarios; resumable, `--report` rewrites `summary.md` |
 | `results/<run>/` | One directory per full run (see run log). Each has `summary.md` (all tables), plus `raw.pkl` and plots when generated locally |
 
 Only `summary.md` is committed. `raw.pkl` (about 1.2 GB in total), the plots (`*.png`) and the
@@ -142,6 +143,7 @@ Result files written before the reorganisation may still name their directory th
 | `depletion` | same (close) | finite coverage pools on v+1: [30, 400, 400, 400, 300, 200, 100, 50] successes |
 | `rank_<ρ>_<d>` | OLD_RATES | v+1 rates are a permutation of the old ones with rank correlation ≈ ρ (Gaussian copula on normal scores, draw d; same noise for every ρ). Only the ranking changes, not the set of rates (run 6) |
 | `rankc_<ρ>_<d>` | CLOSE_RATES | same on the close rates |
+| `drift_<swap\|geom>_<late\|early>` | OLD_RATES, per-operator τ on v (`DRIFT_TAU`) | v's ranking changes during the base run. v+1 (uniform τ) is a permutation of OLD_RATES ranked like v at the end of the base run (`late`) or at its start (`early`) (run 11) |
 
 ## Sanity checks
 
@@ -800,6 +802,71 @@ transfer's 1.09×. This is the rescaling cost. At L ≤ 0.5 it ties or beats tra
 - Its L=1 cost is about 2% against `bmcs_cal` and 4% against the hindsight-best prior. It is the main
   weakness left (next step 4).
 
+### Run 11: recency-weighted priors (`results/recency/`)
+
+**Question.** Should the v-derived priors weight the end of the base run more, since v+1 starts
+from the corpus inherited at the end of v?
+
+**Command:**
+`recency_sweep.py --out results/recency`, about 50 minutes on 8 processes (resumable;
+`--report` rewrites `summary.md` from `raw.pkl`).
+
+**What changed in the simulator.**
+- `run_policy(..., half_life=h, recency="decay" | "weight")`. `base_run_counts` also returns counts
+  where each batch is weighted by 0.5^(age / h), with age in base-run executions (all operators).
+  Same random draws, so `half_life=None` is bit-identical to before (checked).
+  - `decay` builds transfer, calib and shuffled from the weighted counts: recency-weighted mean,
+    weight min(N, ñ).
+  - `weight` keeps the full-run mean and only caps the weight at min(N, ñ). This is the control that
+    separates "more recent" from "weaker": a short memory also means fewer effective executions.
+- Four `drift_*` scenarios where v's ranking changes *during the base run* (per-operator τ on v, see
+  `DRIFT_TAU`). v+1 is a permutation of OLD_RATES ranked like v at the end of the base run (`_late`,
+  where recency should help) or at its start (`_early`, where it should hurt).
+
+**Grid:**
+- Policies: transfer, `bmcs_cal_r`, `mix50_cal_r`, each with 7 prior variants: full, decay and
+  weight at h ∈ {64k, 16k, 4k}. Fresh and calib at full only, for reference.
+- 25 scenarios: the 4 drift scenarios; no_shift, mild_shift, reversal, close_no_shift,
+  close_reversal; rank and rankc at ρ ∈ {1, 0.5, 0, −1} × 2 draws.
+- L ∈ {1, 0.2}, R=30, N=5000: 1,150 cells.
+- Effective executions per operator: about 10.8k at h=64k, 2.9k at 16k and 740 at 4k (full run: 31k).
+  So at h=64k the cap N=5000 still binds, and `w64k` is identical to `full` (checked). **`d64k` vs
+  `full` is therefore the clean "more recent at the same weight" comparison.**
+
+**Findings.**
+- **Recency at the same weight does nothing for the controller.** `bmcs_cal_r` with `d64k`: median
+  ratio to full 1.006 at L=1 and 1.000 at L=0.2, range 0.90–1.08, no significant cell after
+  Bonferroni over 25 scenarios. Same for `mix50_cal_r`.
+- **Shorter memories mostly just weaken the prior, and `weight` reproduces their effect.**
+  - For transfer alone, d16k/d4k give big gains exactly where transfer is wrong (reversal 1.3–2.0×,
+    rank ρ ≤ 0 up to 3.3×) and cost 5–22% where it is right (no_shift, rank ρ=1, close). The
+    weight-only control gives nearly the same numbers (for example rank_0_0 at L=1: d4k 3.32,
+    w4k 3.35; no_shift: 0.95 and 0.95). This is the familiar "smaller N is safer and weaker" trade
+    from run 7, not a recency effect.
+  - For `bmcs_cal_r`, which already protects against a wrong ranking, h=4k costs up to 7% where the
+    ranking is right (close_no_shift 0.93–0.94, rankc_1_0 0.93, no_shift at L=0.2 0.94) and gains
+    nothing significant elsewhere.
+- **Why the drift scenarios show no recency gain.**
+  - The late base-run window has very few successes. Rates decay to about 1/6 of their start by
+    T/4, so a 16k half-life leaves 0–4 effective successes per operator. The transfer prior's rank
+    correlation with v+1 drops from 0.52 (full) to 0.19 (d16k) and −0.06 (d4k) in drift_geom_late,
+    and falls with h in every control scenario too (no_shift: 0.98 → 0.84 → 0.52).
+  - Where the late leader is clear (drift_swap_late), the full-run average already ranks it in the
+    top two (rank correlation 0.98), so there is little to gain.
+  - Only `d64k` keeps enough data, and it moves rank correlation by at most ±0.1.
+- **Side observation: transfer's unscaled prior gains a little from recency at L=0.2 (d64k median
+  1.036).** Late rates are lower, so the recency-weighted mean is less over-optimistic: recency acts
+  as a crude rescaling. The rescaled controller already does this properly, so it gains nothing.
+- **The controller's edge over the matched coin flip is unchanged** (median `bmcs_cal_r` /
+  `mix50_cal_r` 1.00–1.02 for every variant).
+
+**Conclusion.** Keep the full-run prior. In this simulator a recency-weighted prior only helps
+through the weaker weight it implies, which the controller makes unnecessary, and its noise costs
+up to 7% where the old ranking holds. The caveat is the rate model: a real base run whose ranking
+shifts sharply while still producing many late successes (slower decay than here) could change
+this. The real base run's per-batch log can check that directly: if the family ranking in its last
+quarter matches the full-run ranking, recency weighting cannot help.
+
 ## Overall conclusions
 
 1. **Question 1 (does old experience help?).** Yes, when the old top operators stay near the top,
@@ -890,6 +957,9 @@ These are mirrored in `PLAN.md` section 6.
    relative precision, and see whether it removes the L=1 cost without losing the L ≤ 0.5 gains.
 5. **Operator-level forgetting** (late_riser) and **evidence forgetting in P(T)** (late drift), as
    before.
+6. **Recency-weighted priors: done, not adopted (run 11).** No gain at matched weight; shorter
+   half-lives only weaken the prior. Revisit only if a real base run's late-quarter family ranking
+   differs from its full-run ranking.
 
 **Then Stage 2:** LibAFL scheduler and the one-transition pilot (week-3 gate). The pilot should log
 the fitted scale c, the real counterpart of L, which decides between `bmcs_cal_r` and `bmcs_cal`.

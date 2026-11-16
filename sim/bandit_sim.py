@@ -20,6 +20,15 @@ K = 8
 OLD_RATES = np.array([1e-2, 5e-3, 3e-3, 2e-3, 1e-3, 5e-4, 2e-4, 1e-4])
 # Harder scenarios: the top operators are close together.
 CLOSE_RATES = np.array([4e-3, 3.5e-3, 3e-3, 2.5e-3, 1.5e-3, 1e-3, 5e-4, 2e-4])
+# Per-operator decay (fraction of T) on the old version for the drift_* scenarios.
+#   swap: op 0 saturates fast, op 3 keeps paying; by the end of the base run op 3 leads by ~1.9x,
+#         but the full-run average still ranks op 1 first and op 3 a close second.
+#   geom: top operators saturate faster; the late ranking is 3,4,2,5,0,... with small gaps
+#         (rank correlation 0.5 with the full-run average, whose leader is op 0).
+DRIFT_TAU = {
+    "swap": np.array([0.005, 0.05, 0.05, 1.0, 0.05, 0.05, 0.05, 0.05]),
+    "geom": np.array([0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0]),
+}
 
 
 # ---------------------------------------------------------------- scenarios
@@ -89,6 +98,21 @@ def _make_scenario(name, seed):
     if name == "depletion":
         # Finite coverage pools on v+1; the inherited corpus already covers most of op 0's region.
         return spec(c), spec(c, pool=[30, 400, 400, 400, 300, 200, 100, 50])
+    if name.startswith("drift_"):
+        # drift_<profile>_<late|early>: the old version's ranking changes *during the base run*
+        # (per-operator tau on v), so the base run's recency matters. v+1 has uniform decay and is a
+        # permutation of OLD_RATES ranked like v at the end of the base run (late) or at its start (early).
+        _, profile, which = name.split("_")
+        tau = DRIFT_TAU[profile]
+        old_sp = spec(old, tau=tau)
+        if which == "early":
+            return old_sp, spec(old)
+        if which == "late":
+            late = old / (1.0 + 0.25 / tau)  # rates at t = T/4, the end of the base run
+            new = np.empty(K)
+            new[np.argsort(-late)] = np.sort(old)[::-1]
+            return old_sp, spec(new)
+        raise ValueError(name)
     if name.startswith(("rank_", "rankc_")):
         # rank_<rho>_<draw> on OLD_RATES, rankc_<rho>_<draw> on CLOSE_RATES
         kind, rho, draw = name.split("_")
@@ -104,21 +128,37 @@ def rates(sp, t, T, S):
 
 
 # ---------------------------------------------------------------- base runs and priors
-def base_run_counts(rng, sp, n_exec, B, T):
-    """Uniform-random operator choice; returns (s, n) per operator for the first n_exec executions."""
+def base_run_counts(rng, sp, n_exec, B, T, half_life=None):
+    """Uniform-random operator choice; returns (s, n) per operator for the first n_exec executions.
+
+    With half_life (in base-run executions, all operators together), also returns recency-weighted
+    counts (s_rec, n_rec): each batch's counts are weighted by 0.5 ** (age / half_life), where age is
+    the number of base-run executions after that batch. Uses the same random draws, so (s, n) are
+    unchanged by half_life.
+    """
     s = np.zeros(K)
     n = np.zeros(K)
+    s_rec = np.zeros(K)
+    n_rec = np.zeros(K)
+    lam = 0.5 ** (B / half_life) if half_life else 1.0
     for k in range(n_exec // B):
         nk = rng.multinomial(B, np.full(K, 1.0 / K))
-        s += rng.binomial(nk, rates(sp, k * B, T, s))
+        sk = rng.binomial(nk, rates(sp, k * B, T, s))
+        s += sk
         n += nk
-    return s, n
+        s_rec = lam * s_rec + sk
+        n_rec = lam * n_rec + nk
+    return (s, n, s_rec, n_rec) if half_life else (s, n)
 
 
-def build_priors(s, n, N, a0=1.0, b0=1.0, rng=None):
-    """Capped transfer prior plus the calibrated-fresh and shuffled-transfer controls."""
+def build_priors(s, n, N, a0=1.0, b0=1.0, rng=None, n_weight=None):
+    """Capped transfer prior plus the calibrated-fresh and shuffled-transfer controls.
+
+    n_weight, if given, replaces n in the weight cap min(N, n) but not in the mean p_hat
+    (the "weight-only" control for recency weighting).
+    """
     p_hat = (s + a0) / (n + a0 + b0)
-    Na = np.minimum(N, n)
+    Na = np.minimum(N, n if n_weight is None else n_weight)
     transfer = (a0 + Na * p_hat, b0 + Na * (1 - p_hat))
     pm = p_hat.mean()
     calib = (a0 + Na * pm, b0 + Na * (1 - pm))
@@ -191,17 +231,35 @@ def log_marginal_scaled(a0, b0, s, f):
 
 
 def run_policy(policy, scenario, R=30, T=1_000_000, B=256, N=500, gamma=0.98,
-               n_base=3, seed=0, tv_every=50, tv_draws=1000, new_level=1.0, tv_pair=("calib", "transfer")):
+               n_base=3, seed=0, tv_every=50, tv_draws=1000, new_level=1.0, tv_pair=("calib", "transfer"),
+               half_life=None, recency="decay"):
     """Run R independent trials of one policy on one scenario. Returns a dict of arrays.
 
     tv_pair: the two priors whose posterior recommendation distributions are compared for "tv".
+    half_life: if set, priors are built from recency-weighted base-run counts (see base_run_counts).
+      recency="decay" uses the weighted counts for both the mean and the weight cap;
+      recency="weight" keeps the full-run mean and only caps the weight at the weighted count
+      (control that separates "more recent" from "weaker").
     """
     rng = np.random.default_rng(seed)
     old, new = make_scenario(scenario, new_level)
 
     # Three uniform-choice base runs on the old version, first "hour" (= T/4) only.
-    base = [base_run_counts(rng, old, T // 4, B, T) for _ in range(n_base)]
-    priors = [build_priors(s, n, N, rng=rng) for s, n in base]
+    # Each entry is (s, n, n_weight) for build_priors.
+    base = []
+    for _ in range(n_base):
+        if half_life is None:
+            s, n = base_run_counts(rng, old, T // 4, B, T)
+            base.append((s, n, None))
+        else:
+            s, n, s_rec, n_rec = base_run_counts(rng, old, T // 4, B, T, half_life)
+            if recency == "decay":
+                base.append((s_rec, n_rec, None))
+            elif recency == "weight":
+                base.append((s, n, n_rec))
+            else:
+                raise ValueError(recency)
+    priors = [build_priors(s, n, N, rng=rng, n_weight=w) for s, n, w in base]
     # Shuffled control: fresh permutation per trial (rebuild from its base run).
     model_names, chooser = POLICIES[policy]
     M = len(model_names)
@@ -210,8 +268,8 @@ def run_policy(policy, scenario, R=30, T=1_000_000, B=256, N=500, gamma=0.98,
     tva = np.zeros((2, R, K))  # tv_pair priors, for divergence logging
     tvb = np.zeros((2, R, K))
     for r in range(R):
-        s, n = base[r % n_base]
-        pr = build_priors(s, n, N, rng=rng) if "shuffled" in model_names else priors[r % n_base]
+        s, n, w = base[r % n_base]
+        pr = build_priors(s, n, N, rng=rng, n_weight=w) if "shuffled" in model_names else priors[r % n_base]
         for m, name in enumerate(model_names):
             pa[m, r], pb[m, r] = pr[name]
         for j, name in enumerate(tv_pair):
