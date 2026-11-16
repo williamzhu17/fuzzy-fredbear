@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Run a command with every SLURM_* variable removed from the environment.
+#
+#   slurm/fresh srun -p interactive -q interactive -c 4 --mem=8G -t 1:00:00 --pty bash
+#
+# Needed when you submit from inside another Slurm job (an OnDemand desktop, or a Claude session
+# running in one). Without it, srun tries to start a step inside that job (1 CPU, so it hangs), and
+# the inherited SLURM_EXPORT_ENV=NONE starts the new job with an empty PATH ("execve(): bash: No
+# such file or directory"). sbatch works without it, but using it there too does no harm.
+exec env $(compgen -e | grep '^SLURM_' | sed 's/^/-u /') "$@"

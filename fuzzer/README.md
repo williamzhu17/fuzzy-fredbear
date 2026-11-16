@@ -4,7 +4,7 @@ A LibAFL (0.16.1) fuzzer where an operator-family policy picks the mutation for 
 (PLAN section 2, "What one action is"). The policies port the simulator's controller exactly; see
 the cross-check below.
 
-**Status (Nov 13, 2026):** works end to end on libpng (four versions built, macOS only so far).
+**Status (Nov 13, 2026):** works end to end on libpng (four versions built on macOS; 1.6.45 and 1.6.46 also built and run on FarmShare's Linux compute nodes, see [`docs/SLURM.md`](../docs/SLURM.md)).
 No pilot yet. Next steps are at the bottom.
 
 ## Setup
@@ -155,6 +155,6 @@ end. The hypothesis is still resampled once per batch.
    `FamilyMutator`.
 4. **Corpus scheduler.** `QueueScheduler` is a placeholder. Pick one scheduler and use it for every
    policy.
-5. **Linux.** Only built on macOS. On Linux, link order with GNU ld may need fixing in `build.rs`.
+5. **Linux.** Builds and runs on FarmShare (Ubuntu 24.04, Nov 16). It needs rustc ≥ 1.93.1 and a `CPLUS_INCLUDE_PATH` fix for clang++; see [`docs/SLURM.md`](../docs/SLURM.md). No link-order changes were needed.
 6. **Analysis script.** Coverage at 15 min / 1 h, Mann–Whitney + A12 (reuse `sim/bandit_sim.py`'s
    `mann_whitney`, `a12`, `holm`).

@@ -20,6 +20,8 @@ weighs both options and detects when old experience has become misleading.
 3. [`sim/results/final/summary.md`](sim/results/final/summary.md): tables from the consolidated final sweep.
 4. [`fuzzer/README.md`](fuzzer/README.md): the Stage 2 fuzzer: how to run a transition, policies,
    operator families, and its next steps.
+5. [`docs/SLURM.md`](docs/SLURM.md): building and running fuzzing jobs on Stanford FarmShare
+   compute nodes with Slurm.
 
 ## Layout
 
@@ -29,6 +31,7 @@ weighs both options and detects when old experience has become misleading.
 ├── requirements.txt      pinned Python dependencies
 ├── docs/
 │   ├── PLAN.md           current project plan (v3)
+│   ├── SLURM.md          running jobs on FarmShare compute nodes
 │   └── archive/
 │       └── PLAN_v2.md    plan before the Stage 1 simulation
 ├── fuzzer/               Stage 2 LibAFL fuzzer (Rust); see fuzzer/README.md

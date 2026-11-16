@@ -14,6 +14,7 @@ venv/
 # Rust build output and fuzzer campaign outputs
 fuzzer/target/
 fuzzer/runs/
+fuzzer/slurm-logs/
 fuzzer/targets/*/repo/
 fuzzer/targets/*/build/
 
