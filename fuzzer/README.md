@@ -46,12 +46,31 @@ This writes `targets/libpng/build/1.6.45/`: `fredbear` (the fuzzer for that vers
 compiles libpng and its OSS-Fuzz harness with SanitizerCoverage, using OSS-Fuzz's configuration
 (stdio and write support off), and links them into the fuzzer through `build.rs`.
 
-| Transition | Size | Library change |
-|---|---|---|
-| 1.6.39 → 1.6.40 | small | ~50 lines: eXIf and pCAL fixes |
-| 1.6.45 → 1.6.46 | large | ~590 lines: new mDCV and cLLI chunk parsing |
+| Transition | Size | Reachable changed lines | Library change |
+|---|---|---|---|
+| 1.6.39 → 1.6.40 | small | 48 | eXIf multiplicity and pCAL fixes |
+| 1.6.45 → 1.6.46 | large | 315 | New mDCV and cLLI chunk parsing |
+| 1.6.46 → 1.6.47 | very large | 2,633 | Colorspace precedence reworked; most `png_handle_*` chunk handlers rewritten |
 
 Within each pair the OSS-Fuzz harness and dictionary are identical, so only the library differs.
+
+**How these were picked** (survey of 1.6.30–1.6.59, Nov 15, 2026):
+1. The harness (`contrib/oss-fuzz/libpng_read_fuzzer.cc`) and `png.dict` must be byte-identical
+   within the pair. The harness changed at 13 of 29 releases, which rules those pairs out.
+2. Size is measured as changed code the harness can reach: read-path library files only (`png.c`,
+   `pngrutil.c`, `pngrtran.c`, `pngread.c`, `pngset.c`, `pngget.c`, `pngtrans.c`, `pngrio.c`,
+   `pngmem.c`, `pngerror.c`), ignoring whitespace, comments, version strings and copyright lines.
+   Write support and stdio are compiled out, and the harness never uses the progressive reader
+   (`pngpread.c`), so those files are excluded.
+3. Pairs from 1.6.52 on are avoided: the harness gains allocation-failure injection (`nalloc.h`).
+
+To reproduce the numbers (from `targets/libpng/repo`; `a`/`b` are tags like `v1.6.45`):
+
+```bash
+git diff -U0 -w $a $b -- png.c pngrutil.c pngrtran.c pngread.c pngset.c pngtrans.c pngrio.c pngmem.c pngerror.c pngget.c | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' | grep -vE '1\.6\.[0-9]+|[Cc]opyright|^[+-][[:space:]]*(/?\*|//)|^[+-][[:space:]]*$' | wc -l
+```
+
+1.6.47 has not been built with `build.sh` yet.
 
 **First numbers (Nov 13, 2026, one 2-minute base run on 1.6.45; indicative only):**
 - About 120k executions per second.

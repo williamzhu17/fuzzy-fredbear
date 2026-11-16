@@ -40,7 +40,7 @@ simulation.
 
 ### Reduced Stage 2 (Nov 15, 2026)
 
-The project is due in about 3 weeks (early December), so Stage 2 is cut to fit about 11 hours of
+The project is due in about 3 weeks (early December), so Stage 2 is cut to fit about 17 hours of
 wall-clock time on one 8-core laptop (6 performance cores). This replaces the budget in sections 7–8
 once the team agrees.
 
@@ -50,14 +50,14 @@ controller still sees far more evidence than in Stage 1, even if coverage platea
 
 | | Plan v3 (sections 7–8) | Reduced |
 |---|---|---|
-| Programs / transitions | 3 / 6 | libpng / 2 (1.6.39 → 1.6.40, 1.6.45 → 1.6.46) |
+| Programs / transitions | 3 / 6 | libpng / 3 (1.6.39 → 1.6.40, 1.6.45 → 1.6.46, 1.6.46 → 1.6.47) |
 | Policies | 6 cross-version + 3 same-version controls | 6: uniform, fresh, transfer, adaptive, dts, MOpt |
 | Campaign length | 4 h | 15 min (30 min if the pilot shows coverage still rising at 15 min) |
 | Trials per configuration | 20 | 20 at 15 min (10 at 30 min, same cost) |
 | Base runs on v | 3 × 6 h per transition | 3 × 1 h per transition |
-| Total | about 4,430 core-hours | about 66 core-hours (about 11 h wall-clock on 6 cores) |
+| Total | about 4,430 core-hours | about 99 core-hours (about 17 h wall-clock on 6 cores) |
 
-Same cost either way: 2 transitions × 6 policies × 20 trials × 0.25 h = 60 core-hours, plus 6
+Same cost either way: 3 transitions × 6 policies × 20 trials × 0.25 h = 90 core-hours, plus 9
 core-hours of base runs. 20 trials at 15 minutes is preferred over 10 at 30 minutes: the section 7
 power table shows 10 trials detect only the headline effect reliably.
 
@@ -66,6 +66,23 @@ Strategy to Rule Them All", ICSE 2022) found havoc hard to beat, and gains from 
 scheduling small and target-dependent. `uniform` answers the first question a reader will ask: does
 learned scheduling beat random choice on libpng at all? If `fresh` does not beat `uniform`,
 differences between priors mean little. The pilot includes uniform runs on v+1 to check this early.
+
+**Why three transitions, and why these.** A survey of every libpng release from 1.6.30 to 1.6.59
+(Nov 15) kept only pairs where the OSS-Fuzz harness and `png.dict` are byte-identical, then counted
+changed code the harness can reach (read-path files only: write support, stdio and the progressive
+reader are not exercised; comments and version strings excluded). The three transitions form a size
+gradient:
+
+| Transition | Reachable changed lines | Change | Expected role |
+|---|---|---|---|
+| 1.6.39 → 1.6.40 | 48 | eXIf multiplicity, pCAL leak | Little changes; transfer should help, adaptive should match it |
+| 1.6.45 → 1.6.46 | 315 | New mDCV and cLLI chunk parsing | New code to reach; ranking may shift |
+| 1.6.46 → 1.6.47 | 2,633 | Colorspace precedence reworked; most `png_handle_*` chunk handlers rewritten | Most likely to break the old ranking, where adaptive should beat transfer |
+
+1.6.46 → 1.6.47 chains with the large pair: 1.6.46 is v+1 in one and v in the other, so it reuses
+the 1.6.46 build (but needs its own uniform base runs from the seeds). Pairs from 1.6.52 on were
+avoided: their harness adds allocation-failure injection (`nalloc.h`), which changes what is being
+fuzzed. 1.6.47 has not been built with `build.sh` yet; do that first.
 
 **Other changes.**
 - **Primary outcome:** edge coverage at the end of the campaign (15 or 30 min), adaptive versus
@@ -81,17 +98,18 @@ differences between priors mean little. The pilot includes uniform runs on v+1 t
 
 **Timeline.**
 - **Week 1 (Nov 16–22):**
-  - build the four libpng versions;
+  - build the five libpng versions (1.6.39, 1.6.40, 1.6.45, 1.6.46, 1.6.47);
   - base runs (3 × 1 h per transition) and a 15-minute pilot on one transition: week-3 gate checks
     (section 8), N/γ calibration, decide 15 vs 30 min;
   - in parallel: MOpt policy, a fixed corpus scheduler, analysis script for `coverage.csv`
     (Mann–Whitney, A12, Holm), and the dictionary decision (it lacks the mDCV/cLLI chunk names that
     1.6.46 adds).
-- **Week 2 (Nov 23–29):** main runs over two nights, then analysis.
+- **Week 2 (Nov 23–29):** main runs over three nights (about 15 h), then analysis.
 - **Week 3 (Nov 30–Dec 6):** write-up, with slack for reruns.
 
 **Next steps.**
-1. Build the four libpng versions and run the base runs.
+1. Build the five libpng versions (check 1.6.47 builds) and run the base runs on 1.6.39, 1.6.45
+   and 1.6.46.
 2. Pilot on one transition (uniform, fresh, transfer, adaptive on v+1): gate checks, N/γ
    calibration, campaign length, and whether fresh beats uniform.
 3. MOpt policy, fixed corpus scheduler, analysis script, dictionary decision.
