@@ -5,7 +5,7 @@ Oct 21, 2026 · @Someone
 The previous version is kept in [`archive/PLAN_v2.md`](archive/PLAN_v2.md). This version was updated after Stage 1 runs 5–8.
 Stage 1 evidence for every change below is in [`sim/README.md`](../sim/README.md) (run log) and the `sim/results/` directories.
 
-## Status and proposed changes (Nov 13, 2026)
+## Status and proposed changes (Nov 15, 2026)
 
 **Done since v3: Stage 2 fuzzer skeleton** ([`fuzzer/`](../fuzzer/README.md)).
 - LibAFL 0.16.1 fuzzer: one operator family per execution (9 families), success = input added to
@@ -29,10 +29,8 @@ Stage 1 evidence for every change below is in [`sim/README.md`](../sim/README.md
   depletion scenarios where the controller is weakest. **Next:** add `dts` to the simulator first.
 - **MOpt (Lyu et al., USENIX Security 2019) as a Stage 2 baseline:** the strongest single-campaign
   operator scheduler, with no cross-version transfer. LibAFL has `StdMOptMutator`.
-- **Smaller Stage 2.** About 4,430 core-hours does not fit the remaining time. Proposal: libpng
-  only, 2 transitions, 1-hour campaigns, 10 trials, 5 policies (fresh, transfer, adaptive, dts,
-  MOpt), about 100 core-hours. Primary claim: "adaptive avoids transfer's collapse", which 10 trials
-  detect (section 7 power table).
+- **Smaller Stage 2.** About 4,430 core-hours does not fit the remaining time. Superseded by the
+  reduced Stage 2 below (Nov 15), which shortens campaigns further.
 
 **New open issue: execution-rate calibration.** The simulator treats 10⁶ executions as 4 hours.
 libpng runs about 4×10⁸ executions per hour, so N=5000 and a per-batch γ tuned in simulation
@@ -40,12 +38,64 @@ would wash out in about a second. The pilot must measure executions per second a
 per-family rates, then set N (and γ) so the prior covers the same fraction of the campaign as in
 simulation.
 
+### Reduced Stage 2 (Nov 15, 2026)
+
+The project is due in about 3 weeks (early December), so Stage 2 is cut to fit about 11 hours of
+wall-clock time on one 8-core laptop (6 performance cores). This replaces the budget in sections 7–8
+once the team agrees.
+
+**Why short campaigns are enough.** At about 120k executions per second, a 15-minute campaign is
+about 10⁸ executions, roughly 100× what the simulator treats as a full 4-hour campaign (10⁶). The
+controller still sees far more evidence than in Stage 1, even if coverage plateaus early.
+
+| | Plan v3 (sections 7–8) | Reduced |
+|---|---|---|
+| Programs / transitions | 3 / 6 | libpng / 2 (1.6.39 → 1.6.40, 1.6.45 → 1.6.46) |
+| Policies | 6 cross-version + 3 same-version controls | 6: uniform, fresh, transfer, adaptive, dts, MOpt |
+| Campaign length | 4 h | 15 min (30 min if the pilot shows coverage still rising at 15 min) |
+| Trials per configuration | 20 | 20 at 15 min (10 at 30 min, same cost) |
+| Base runs on v | 3 × 6 h per transition | 3 × 1 h per transition |
+| Total | about 4,430 core-hours | about 66 core-hours (about 11 h wall-clock on 6 cores) |
+
+Same cost either way: 2 transitions × 6 policies × 20 trials × 0.25 h = 60 core-hours, plus 6
+core-hours of base runs. 20 trials at 15 minutes is preferred over 10 at 30 minutes: the section 7
+power table shows 10 trials detect only the headline effect reliably.
+
+**Why `uniform` is back.** Uniform family choice is essentially stock havoc. Wu et al. ("One Fuzzing
+Strategy to Rule Them All", ICSE 2022) found havoc hard to beat, and gains from learned mutation
+scheduling small and target-dependent. `uniform` answers the first question a reader will ask: does
+learned scheduling beat random choice on libpng at all? If `fresh` does not beat `uniform`,
+differences between priors mean little. The pilot includes uniform runs on v+1 to check this early.
+
+**Other changes.**
+- **Primary outcome:** edge coverage at the end of the campaign (15 or 30 min), adaptive versus
+  transfer-only, plus area under the coverage curve. Replaces "coverage at 1 hour".
+- **Dropped unless time is left:** calibrated fresh, shuffled transfer, fixed 50/50 and the
+  same-version restart controls. Calib or 50/50 come back first.
+- **Calibration is more urgent:** N (and γ for `dts`) must be set so the prior covers the same
+  fraction of a 15-minute campaign as it did in simulation.
+- **Run hygiene on a laptop:** at most 6 concurrent campaigns, one per performance core, none on the
+  efficiency cores. Campaigns are wall-clock limited, so thermal throttling changes the executions
+  per trial: log executions and also compare coverage at a fixed execution count.
+- **`dts` in the simulator is optional.** It is already in the fuzzer; real data comes first.
+
+**Timeline.**
+- **Week 1 (Nov 16–22):**
+  - build the four libpng versions;
+  - base runs (3 × 1 h per transition) and a 15-minute pilot on one transition: week-3 gate checks
+    (section 8), N/γ calibration, decide 15 vs 30 min;
+  - in parallel: MOpt policy, a fixed corpus scheduler, analysis script for `coverage.csv`
+    (Mann–Whitney, A12, Holm), and the dictionary decision (it lacks the mDCV/cLLI chunk names that
+    1.6.46 adds).
+- **Week 2 (Nov 23–29):** main runs over two nights, then analysis.
+- **Week 3 (Nov 30–Dec 6):** write-up, with slack for reruns.
+
 **Next steps.**
-1. Calibrate N and γ to the real execution rate, and decide on the dictionary (it lacks the
-   mDCV/cLLI chunk names that 1.6.46 adds).
-2. `dts` in the simulator (`sim/bandit_sim.py`), compared with `bmcs_cal_r`, transfer and `mix50_cal_r`.
-3. Pilot on one libpng transition: the week-3 gate checks in section 8, plus the calibration above.
-4. MOpt policy, a fixed corpus scheduler, and an analysis script for `coverage.csv`.
+1. Build the four libpng versions and run the base runs.
+2. Pilot on one transition (uniform, fresh, transfer, adaptive on v+1): gate checks, N/γ
+   calibration, campaign length, and whether fresh beats uniform.
+3. MOpt policy, fixed corpus scheduler, analysis script, dictionary decision.
+4. Main runs (reduced budget above).
 
 ## Summary
 
