@@ -153,23 +153,37 @@ where
 /// Sum the per-family counts of a base run's batches.jsonl over batches that ended before
 /// `cutoff` seconds.
 pub fn base_counts_from_log(path: &std::path::Path, cutoff: f64) -> Result<BaseCounts, String> {
-    let file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    base_counts_from_logs(&[path.to_path_buf()], cutoff)
+}
+
+/// Pool several base runs: sum each file's per-family counts over its own batches that ended
+/// before `cutoff` seconds (so the cutoff means the first `cutoff` seconds of every run).
+pub fn base_counts_from_logs(paths: &[std::path::PathBuf], cutoff: f64) -> Result<BaseCounts, String> {
     let k = FAMILIES.len();
     let (mut s, mut n) = (vec![0.0; k], vec![0.0; k]);
-    for (i, line) in BufReader::new(file).lines().enumerate() {
-        let line = line.map_err(|e| e.to_string())?;
-        let v: serde_json::Value =
-            serde_json::from_str(&line).map_err(|e| format!("{}:{}: {e}", path.display(), i + 1))?;
-        if v["t"].as_f64().ok_or("missing t")? > cutoff {
-            break;
+    for path in paths {
+        let file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut used = 0.0;
+        for (i, line) in BufReader::new(file).lines().enumerate() {
+            let line = line.map_err(|e| e.to_string())?;
+            let v: serde_json::Value =
+                serde_json::from_str(&line).map_err(|e| format!("{}:{}: {e}", path.display(), i + 1))?;
+            if v["t"].as_f64().ok_or("missing t")? > cutoff {
+                break;
+            }
+            for a in 0..k {
+                let (sa, na) = (v["s"][a].as_f64().ok_or("missing s")?, v["n"][a].as_f64().ok_or("missing n")?);
+                s[a] += sa;
+                n[a] += na;
+                used += na;
+            }
         }
-        for a in 0..k {
-            s[a] += v["s"][a].as_f64().ok_or("missing s")?;
-            n[a] += v["n"][a].as_f64().ok_or("missing n")?;
+        if used == 0.0 {
+            return Err(format!("{}: no batches before {cutoff}s", path.display()));
         }
     }
-    if n.iter().sum::<f64>() == 0.0 {
-        return Err(format!("{}: no batches before {cutoff}s", path.display()));
+    if paths.is_empty() {
+        return Err("no base logs given".to_string());
     }
     Ok(BaseCounts { families: FAMILIES.iter().map(|f| f.to_string()).collect(), s, n })
 }
@@ -200,6 +214,28 @@ mod tests {
         ]);
         let base = base_counts_from_log(&path, 5.0).unwrap();
         assert_eq!((base.n[0], base.s[0], base.n[8]), (5.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn base_counts_pool_several_logs() {
+        let a = write_log("pool-a", &[
+            r#"{"t":1.0,"n":[2,0,0,0,0,0,0,0,1],"s":[1,0,0,0,0,0,0,0,0]}"#,
+            r#"{"t":9.0,"n":[100,0,0,0,0,0,0,0,0],"s":[50,0,0,0,0,0,0,0,0]}"#,
+        ]);
+        let b = write_log("pool-b", &[
+            r#"{"t":4.0,"n":[3,1,0,0,0,0,0,0,0],"s":[2,1,0,0,0,0,0,0,0]}"#,
+        ]);
+        let pooled = base_counts_from_logs(&[a.clone(), b.clone()], 5.0).unwrap();
+        let (ca, cb) = (base_counts_from_log(&a, 5.0).unwrap(), base_counts_from_log(&b, 5.0).unwrap());
+        for f in 0..9 {
+            assert_eq!(pooled.n[f], ca.n[f] + cb.n[f]);
+            assert_eq!(pooled.s[f], ca.s[f] + cb.s[f]);
+        }
+        assert_eq!((pooled.n[0], pooled.s[0], pooled.n[1]), (5.0, 3.0, 1.0));
+        // One file with nothing before the cutoff is an error, not silently ignored.
+        let late = write_log("pool-late", &[r#"{"t":9.0,"n":[1,0,0,0,0,0,0,0,0],"s":[0,0,0,0,0,0,0,0,0]}"#]);
+        assert!(base_counts_from_logs(&[a, late], 5.0).is_err());
+        assert!(base_counts_from_logs(&[], 5.0).is_err());
     }
 
     #[test]

@@ -27,6 +27,17 @@ $B --target toy-v2 --policy adaptive --base-log runs/base1/batches.jsonl \
    --corpus runs/base1/queue --dict dicts/toy.dict --secs 3600 --seed 1 --out runs/v2-adaptive-1
 ```
 
+**Several base runs.** `--base-log` and `--corpus` each take one or more paths, for example
+`--base-log runs/base-1.6.45-{1,2,3}/batches.jsonl --corpus runs/base-1.6.45-{1,2,3}/queue`.
+- Base logs are pooled by summing each family's counts. The cutoff applies to each run's own
+  clock. The prior's weight is still capped at `--cap-n` per family, so pooling sharpens the
+  rates without strengthening the prior.
+- Corpus directories are loaded in the order given. An input that adds no coverage over those
+  loaded before it is kept as disabled (stored but never mutated), so this is a one-pass merge,
+  not a full minimization. List the directories in the same order for every trial.
+- Every input loaded, disabled ones included, is written to the trial's own `queue/`. Three
+  merged libpng queues are about 60 MB per trial.
+
 `--out` must not exist yet. Outputs:
 
 | File | Contents |

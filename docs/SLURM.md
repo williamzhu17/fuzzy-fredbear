@@ -56,6 +56,10 @@ From <https://docs.farmshare.stanford.edu/docs/storage/>, plus what this account
   add up. If `~` gets close to 50 GB, point `--out` at `/scratch/users/$USER/fredbear/...` and copy
   back only what you keep (`coverage.csv`, `batches.jsonl`, the base runs' `queue/`). Check usage
   with `du -sh ~/cs238 /scratch/users/$USER`.
+- Each trial on v+1 copies its whole inherited corpus into its own `queue/`. With three base
+  queues merged that is about 60 MB per trial, so 360 main-run trials come to about 22 GB. Point
+  the main runs' `--out` at `/scratch`, or delete each trial's `queue/` once it finishes: the
+  analysis needs only `coverage.csv` and `batches.jsonl`, and only base-run queues get reused.
 
 ## Gotcha: submitting from inside a job (OnDemand desktop)
 

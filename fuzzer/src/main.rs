@@ -27,7 +27,7 @@ use libafl_bolts::ToSlice;
 use libafl_bolts::rands::StdRand;
 use libafl_bolts::tuples::tuple_list;
 
-use fredbear::mutator::{FAMILIES, FamilyMutator, base_counts_from_log};
+use fredbear::mutator::{FAMILIES, FamilyMutator, base_counts_from_logs};
 use fredbear::policy::{Policy, PolicyConfig, PolicyKind, PriorSet};
 use fredbear::toy;
 
@@ -51,9 +51,10 @@ struct Args {
     target: String,
     #[arg(long, value_enum)]
     policy: PolicyKind,
-    /// batches.jsonl from a uniform base run on the previous version; builds the priors.
-    #[arg(long)]
-    base_log: Option<PathBuf>,
+    /// batches.jsonl from uniform base runs on the previous version; builds the priors. Several
+    /// files (one flag with several paths, or the flag repeated) are pooled by summing counts.
+    #[arg(long, num_args = 1..)]
+    base_log: Vec<PathBuf>,
     /// Only base-run batches before this many seconds feed the prior (PLAN section 3: first hour).
     #[arg(long, default_value_t = 3600.0)]
     base_cutoff: f64,
@@ -68,9 +69,10 @@ struct Args {
     /// DTS only: per-batch decay of the observed counts (1 = no decay).
     #[arg(long, default_value_t = 1.0)]
     gamma_data: f64,
-    /// Initial corpus directory (the inherited corpus on version v+1).
-    #[arg(long)]
-    corpus: Option<PathBuf>,
+    /// Initial corpus directories (the inherited corpus on version v+1). Several directories are
+    /// loaded in the order given; inputs that add no coverage over earlier ones are kept disabled.
+    #[arg(long, num_args = 1..)]
+    corpus: Vec<PathBuf>,
     /// Dictionary in AFL format.
     #[arg(long)]
     dict: Option<PathBuf>,
@@ -85,22 +87,21 @@ struct Args {
 fn main() -> Result<(), Error> {
     let args = Args::parse();
     let needs_prior = !matches!(args.policy, PolicyKind::Uniform | PolicyKind::Fresh);
-    if needs_prior && args.base_log.is_none() {
+    if needs_prior && args.base_log.is_empty() {
         return Err(Error::illegal_argument(format!("--policy {:?} needs --base-log", args.policy)));
     }
-    let priors = match &args.base_log {
-        Some(path) if needs_prior => {
-            let base = base_counts_from_log(path, args.base_cutoff).map_err(Error::illegal_argument)?;
-            base.validate(&FAMILIES).map_err(Error::illegal_argument)?;
-            PriorSet::build(&base, args.cap_n, args.seed)
-        }
-        _ => PriorSet::flat(FAMILIES.len()),
+    let priors = if needs_prior {
+        let base = base_counts_from_logs(&args.base_log, args.base_cutoff).map_err(Error::illegal_argument)?;
+        base.validate(&FAMILIES).map_err(Error::illegal_argument)?;
+        PriorSet::build(&base, args.cap_n, args.seed)
+    } else {
+        PriorSet::flat(FAMILIES.len())
     };
     let real = args.target == "harness";
     if real && !cfg!(harness) {
         return Err(Error::illegal_argument("this binary has no harness; build it with targets/libpng/build.sh"));
     }
-    if real && args.corpus.is_none() {
+    if real && args.corpus.is_empty() {
         return Err(Error::illegal_argument("--target harness needs --corpus (seeds or an inherited corpus)"));
     }
     if fs::exists(&args.out)? {
@@ -144,11 +145,10 @@ fn main() -> Result<(), Error> {
         .event_mgr(&mut mgr)
         .build()?;
 
-    match &args.corpus {
-        Some(dir) => state.load_initial_inputs(&mut fuzzer, &mut executor, &mut mgr, &[dir.clone()])?,
-        None => {
-            fuzzer.add_input(&mut state, &mut executor, &mut mgr, BytesInput::new(b"FRED".to_vec()))?;
-        }
+    if args.corpus.is_empty() {
+        fuzzer.add_input(&mut state, &mut executor, &mut mgr, BytesInput::new(b"FRED".to_vec()))?;
+    } else {
+        state.load_initial_inputs(&mut fuzzer, &mut executor, &mut mgr, &args.corpus)?;
     }
 
     let start = Instant::now();
