@@ -15,14 +15,15 @@ the jobs ran on FarmShare `iron` compute nodes. FarmShare's own docs:
 ```bash
 cd ~/cs238/fuzzy-fredbear/fuzzer
 mkdir -p slurm-logs                       # sbatch won't create the log directory itself
+# From an OnDemand desktop, always submit through slurm/fresh (see the gotcha below).
 
 # One trial (1 CPU). Arguments after the script are the command to run.
-sbatch -t 01:10:00 slurm/trial.sbatch ./targets/libpng/build/1.6.45/fredbear --target harness \
+slurm/fresh sbatch -t 01:10:00 slurm/trial.sbatch ./targets/libpng/build/1.6.45/fredbear --target harness \
     --policy uniform --corpus targets/libpng/build/1.6.45/seeds \
     --dict targets/libpng/build/1.6.45/png.dict --secs 3600 --out runs/base-1.6.45
 
 # Many trials packed into one 16-CPU job (one command per line in tasks.txt)
-sbatch -c 16 --mem=64G -t 02:30:00 slurm/pack.sbatch tasks.txt
+slurm/fresh sbatch -c 16 --mem=64G -t 02:30:00 slurm/pack.sbatch tasks.txt
 
 squeue -a -u $USER                        # -a matters: the interactive partition is hidden
 ```
@@ -58,22 +59,34 @@ From <https://docs.farmshare.stanford.edu/docs/storage/>, plus what this account
 
 ## Gotcha: submitting from inside a job (OnDemand desktop)
 
-The desktop job leaves `SLURM_*` variables in your shell, and they break `srun`:
+The desktop job leaves `SLURM_*` variables in your shell. They break `srun`, and they can break
+`sbatch` jobs too:
 
 - A plain `srun ...` tries to start a *step inside the desktop job* instead of a new job. It warns
   `--cpus-per-task value exceeds that of job (2 > 1)` and then hangs forever.
 - Unsetting only `SLURM_JOB_ID` gets you a new job, but the inherited `SLURM_EXPORT_ENV=NONE`
   starts it with an empty `PATH`: `execve(): bash: No such file or directory`.
+- A plain `sbatch` submits and starts normally, but the job runs with the desktop's variables.
+  On Nov 16 a build job submitted this way failed with exit code 2 and no error message. It
+  failed in libpng's configure step, which hides its stderr. The same build submitted through
+  `slurm/fresh` succeeded twice. Which variable is responsible is still unknown. Simple trials
+  and the smoke tests worked without `fresh`, so the failure doesn't show up every time.
 
-Fix: run Slurm commands through `fuzzer/slurm/fresh`, which removes every `SLURM_*` variable:
+Fix: submit **every** `srun` and `sbatch` through `fuzzer/slurm/fresh`, which removes every
+`SLURM_*` variable. Outside a job (an ssh shell on a login node) it changes nothing, so using it
+everywhere is safe. All examples in this guide do.
 
 ```bash
 slurm/fresh srun -p interactive -q interactive -c 4 --mem=8G -t 1:00:00 --pty bash   # interactive shell
 slurm/fresh srun -p interactive -q interactive -c 8 --mem=16G -t 0:30:00 cargo build --release
+slurm/fresh sbatch slurm/trial.sbatch ...
 ```
 
-`sbatch` works fine without it (tested), and `squeue`/`sacct`/`scancel` are unaffected.
-Inside an sbatch script, `srun` is fine because Slurm sets that job's own variables.
+`squeue`/`sacct`/`scancel` are unaffected. Inside an sbatch script, `srun` is fine because Slurm
+sets that job's own variables.
+
+If a job submitted with `--dependency=afterok:<id>` waits on a job that fails, Slurm cancels it
+automatically (state `CANCELLED`, elapsed `00:00:00`). Resubmit it once the first job is fixed.
 
 ## Partitions and limits (this account, `operator`)
 
@@ -139,11 +152,11 @@ cargo build --release
 ./targets/libpng/build.sh 1.6.45
 ./targets/libpng/build.sh 1.6.46
 EOF
-sbatch slurm-logs/build.sbatch
+slurm/fresh sbatch slurm-logs/build.sbatch
 ```
 
 Tested: a clean Rust build takes about 45 s on 8 CPUs, and each libpng version about 10 s more.
-Both 1.6.45 and 1.6.46 build and run on Linux. The binaries are self-contained, so trials need
+All five plan versions (1.6.39, 1.6.40, 1.6.45, 1.6.46, 1.6.47) build and run on Linux. The binaries are self-contained, so trials need
 neither the toolchain nor `CPLUS_INCLUDE_PATH`.
 
 Smoke test (Nov 16): a 60 s uniform base run on 1.6.45 through `trial.sbatch`, then `adaptive`
@@ -163,7 +176,7 @@ command. Submit from `fuzzer/` so relative paths work, and override any default 
 line (flags before the script name win over the `#SBATCH` lines):
 
 ```bash
-sbatch -t 04:10:00 -J v46-adaptive-1 slurm/trial.sbatch ./targets/libpng/build/1.6.46/fredbear \
+slurm/fresh sbatch -t 04:10:00 -J v46-adaptive-1 slurm/trial.sbatch ./targets/libpng/build/1.6.46/fredbear \
     --target harness --policy adaptive --base-log runs/base-1.6.45/batches.jsonl \
     --corpus runs/base-1.6.45/queue --dict targets/libpng/build/1.6.46/png.dict \
     --secs 14400 --seed 1 --out runs/1.6.46-adaptive-1
@@ -184,7 +197,7 @@ B=./targets/libpng/build/1.6.46/fredbear
 for pol in adaptive fresh; do for s in $(seq 1 8); do
   echo "$B --target harness --policy $pol --base-log runs/base-1.6.45/batches.jsonl --corpus runs/base-1.6.45/queue --dict targets/libpng/build/1.6.46/png.dict --secs 3600 --seed $s --out runs/1.6.46-$pol-$s"
 done; done > tasks.txt
-sbatch -c 16 --mem=64G -t 01:15:00 slurm/pack.sbatch tasks.txt
+slurm/fresh sbatch -c 16 --mem=64G -t 01:15:00 slurm/pack.sbatch tasks.txt
 ```
 
 The time limit has to cover every wave: `ceil(tasks / CPUs) × per-trial time`, plus a few
@@ -196,8 +209,8 @@ the partial `runs/...` directories of failed or killed trials before resubmittin
 Chain a base run and its trials with a dependency, so the trials wait for the base corpus:
 
 ```bash
-base=$(sbatch --parsable -t 01:10:00 slurm/trial.sbatch ...base-run command...)
-sbatch --dependency=afterok:$base -c 16 --mem=64G -t 01:15:00 slurm/pack.sbatch tasks.txt
+base=$(slurm/fresh sbatch --parsable -t 01:10:00 slurm/trial.sbatch ...base-run command...)
+slurm/fresh sbatch --dependency=afterok:$base -c 16 --mem=64G -t 01:15:00 slurm/pack.sbatch tasks.txt
 ```
 
 ### Large sweeps on `normal`
@@ -214,7 +227,7 @@ set -euo pipefail
 cmd=$(grep -vE '^[[:space:]]*(#|$)' "$1" | sed -n "$((SLURM_ARRAY_TASK_ID + 1))p")
 echo "$cmd"; bash -c "$cmd"
 EOF
-sbatch --array=0-$(($(grep -cvE '^[[:space:]]*(#|$)' tasks.txt) - 1))%32 slurm-logs/array.sbatch tasks.txt
+slurm/fresh sbatch --array=0-$(($(grep -cvE '^[[:space:]]*(#|$)' tasks.txt) - 1))%32 slurm-logs/array.sbatch tasks.txt
 ```
 
 Check the queue first (`sbatch --test-only ...`). On Nov 16 the estimated start was days away.
@@ -238,7 +251,7 @@ says how far it got, but treat that trial as incomplete. Set `-t` comfortably ab
 
 | File | Purpose |
 |---|---|
-| `fuzzer/slurm/fresh` | Run a command with `SLURM_*` cleared (needed for `srun` from an OnDemand desktop) |
+| `fuzzer/slurm/fresh` | Run a command with `SLURM_*` cleared (use for every `srun`/`sbatch` from an OnDemand desktop) |
 | `fuzzer/slurm/trial.sbatch` | One trial in one 1-CPU job |
 | `fuzzer/slurm/pack.sbatch` | Many 1-CPU trials inside one multi-CPU job |
 | `fuzzer/slurm-logs/` | Job logs (git-ignored) |

@@ -6,5 +6,6 @@
 # Needed when you submit from inside another Slurm job (an OnDemand desktop, or a Claude session
 # running in one). Without it, srun tries to start a step inside that job (1 CPU, so it hangs), and
 # the inherited SLURM_EXPORT_ENV=NONE starts the new job with an empty PATH ("execve(): bash: No
-# such file or directory"). sbatch works without it, but using it there too does no harm.
+# such file or directory"). Use it for sbatch too: a build job submitted without it failed (see
+# docs/SLURM.md). Outside a job it changes nothing.
 exec env $(compgen -e | grep '^SLURM_' | sed 's/^/-u /') "$@"
