@@ -34,6 +34,16 @@ use fredbear::toy;
 #[cfg(harness)]
 unsafe extern "C" {
     fn LLVMFuzzerTestOneInput(data: *const u8, size: usize) -> i32;
+    /// From targets/harness_shim.c: calls LLVMFuzzerInitialize if the harness defines one.
+    fn fredbear_harness_init();
+}
+
+/// One-time harness setup, as libFuzzer does before the first input.
+fn init_harness() {
+    #[cfg(harness)]
+    unsafe {
+        fredbear_harness_init();
+    }
 }
 
 /// The libFuzzer-style harness linked in by build.rs (FREDBEAR_HARNESS).
@@ -145,6 +155,9 @@ fn main() -> Result<(), Error> {
         .event_mgr(&mut mgr)
         .build()?;
 
+    if real {
+        init_harness();
+    }
     if args.corpus.is_empty() {
         fuzzer.add_input(&mut state, &mut executor, &mut mgr, BytesInput::new(b"FRED".to_vec()))?;
     } else {

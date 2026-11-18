@@ -45,6 +45,8 @@ for f in "$OUT"/src/png*.c; do
     clang $FLAGS -c "$f" -o "$OUT/obj/$(basename "$f" .c).o"
 done
 clang++ $FLAGS -std=c++11 -c "$OUT/src/contrib/oss-fuzz/libpng_read_fuzzer.cc" -o "$OUT/obj/harness.o"
+# Calls LLVMFuzzerInitialize if present, and stubs LLVMFuzzerMutate (see the file). Not instrumented.
+clang -O1 -c "$HERE/../harness_shim.c" -o "$OUT/obj/harness_shim.o"
 ar rcs "$OUT/libharness.a" "$OUT"/obj/*.o
 
 cp "$OUT/src/contrib/oss-fuzz/png.dict" "$OUT/"

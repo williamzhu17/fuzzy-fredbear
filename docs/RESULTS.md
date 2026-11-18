@@ -7,6 +7,22 @@ directory is git-ignored, so the numbers below are the record.
 
 ## Summary (Nov 17, 2026)
 
+**libxml2 (section 5), added Nov 17:**
+- **libxml2 has the headroom libpng lacks.** Base runs on 2.14.6 were still gaining 33–70 edges
+  in their last 15 minutes.
+- **On 2.14.6 → 2.15.0, every policy keeps finding edges for the whole 15 minutes**: +28 to +55.
+  Libpng found almost all of its few new edges in the first minute.
+- **A trial yields about 190–240 successes,** against 20–60 on libpng.
+- **Family success rates are 1e-4 to 1e-3,** about 100× libpng's and in the simulation's range,
+  so N = 10⁴ gives a few pseudo-successes per family.
+- **First hint of an effect:** adaptive's successes (209–242) all beat uniform's (188–208) in
+  this probe: A12 = 1.00, exact Mann–Whitney p = 0.029, with 4 trials each.
+  - This is one comparison out of six possible between the four policies and is uncorrected.
+  - Edge gains overlap across all policies.
+  - Treat it as a reason to run the full design, not a result.
+
+**libpng (sections 1–4):**
+
 1. **libpng is saturated in our setup.** The merged corpus inherited from the old version already
    reaches almost all edges the harness can reach. With the stock dictionary, edge coverage on
    1.6.46 did not move at all in 30 minutes under any policy. With mDCV/cLLI added to the
@@ -155,6 +171,66 @@ Results:
 - **Outcomes overlap across all policies.** Two transfer N = 1e5 trials ran at 3k and 11k
   executions per second, against about 25k for the rest, and have the lowest success counts.
 
+## 5. libxml2 (Nov 17; jobs 1993978, 1994110)
+
+Setup: libxml2's own OSS-Fuzz `xml` harness, built with `fuzzer/targets/libxml2/build.sh` (see
+`fuzzer/README.md`). The harness, `fuzz.c` and `xml.dict` are identical in 2.14.6 and 2.15.0;
+about 46,600 library `.c` lines changed between them.
+
+### Base runs (job 1993978)
+
+`uniform`, 1 h, from the 366 genSeed seeds, 3 seeds per version.
+
+| Version | Edges at 0 / 5 / 15 / 30 / 45 / 60 min | Executions in 1 h | Corpus at 1 h |
+|---|---|---|---|
+| 2.14.6 | 3770 / 5984–6046 / 6231–6245 / 6322–6408 / 6387–6477 / 6443–6534 | 5.8M–6.9M | 4321–4417 |
+| 2.15.0 | 3680 / 5569–5653 / 5823–5872 / 5943–6051 / 5993–6121 / 6022–6171 | 2.4M–3.9M | 3346–3740 |
+
+- **Still climbing at 60 minutes,** by +33 to +70 edges between 45 and 60 minutes.
+- **No crashes.**
+- **Speed:** about 1.6–1.9k executions per second on 2.14.6 and 0.7–1.1k on 2.15.0.
+- **Each base queue is about 95 MB** (2.14.6) or 120–150 MB (2.15.0).
+- **Pooled family success rates on 2.14.6:** `delete` 9.7e-5, `interesting` 4.6e-4, `bitflip`
+  4.9e-4, `copy_swap` 5.9e-4, `arith` 6.6e-4, `random_bytes` 6.8e-4, `dictionary` 7.2e-4, `insert`
+  1.0e-3, `splice` 1.1e-3.
+- **Best / median = 1.65** (2.14.6) and 1.80 (2.15.0), so the gate check fails narrowly, as on
+  libpng.
+
+### Probe on 2.14.6 → 2.15.0 (job 1994110)
+
+uniform, fresh, transfer and adaptive, 4 trials each, 15 min, N = 10⁴. Every trial starts from
+the three merged 2.14.6 queues (13,547 inputs loaded, about 2,535 kept) and the pooled prior.
+
+- **The inherited corpus starts above 2.15.0's own ceiling.** On 2.15.0 it starts at 6,454–6,458
+  edges, higher than any 2.15.0 run from the seeds reached in an hour (6,022–6,171).
+- **Starting points differ slightly between trials** (corpus kept 2,528–2,542), even though every
+  trial loads the same folders in the same order. libxml2 is not fully deterministic between
+  processes, probably because of its randomized hash seeds.
+
+| Policy | Edges gained in 15 min | Mean | Successes (corpus growth) | Mean | Executions per second |
+|---|---|---|---|---|---|
+| uniform | 28–49 | 36.5 | 188–208 | 196.5 | 1.21k–1.32k |
+| fresh | 37–39 | 38.0 | 185–215 | 193.8 | 0.96k–1.12k |
+| transfer | 29–55 | 40.0 | 186–236 | 213.2 | 1.00k–1.15k |
+| adaptive | 29–44 | 38.2 | 209–242 | 225.5 | 1.04k–1.15k |
+
+- **Edges keep coming throughout the campaign.** Edges at 1 / 5 / 10 / 15 min for uniform-1 were
+  6466 / 6480 / 6497 / 6506, not a single early jump as on libpng.
+- **Adaptive vs uniform on successes:** all 4 adaptive trials beat all 4 uniform trials, A12 = 1.00,
+  exact two-sided Mann–Whitney p = 0.029.
+  - Transfer vs uniform: A12 = 0.69, p = 0.49.
+  - These are uncorrected; after a Holm correction across the six pairwise comparisons,
+    adaptive vs uniform would not be significant.
+  - Edge gains, including edges at a fixed 900k executions, overlap across all policies.
+- **Adaptive's controller.** P(H_T | D) was 0.73–0.84 at the end, and adaptive followed the
+  transfer model in 66–82% of batches. Fitted c = 0.19–0.24, so on libxml2 too the new version's
+  rates are about a fifth of the old ones.
+- **Learned policies run about 15% slower than uniform** (about 1.05–1.10k against 1.27k
+  executions per second). They favour `insert` and `splice`, which make inputs longer. So they
+  found more per execution than the per-time numbers suggest.
+- **Disk:** the 16 trial folders took 4.5 GB, mostly copies of the 280 MB inherited corpus. Their
+  `queue/` folders were deleted afterwards.
+
 ## Reproducing
 
 All commands run from `fuzzer/` on FarmShare. The task files list every trial's exact command:
@@ -162,6 +238,7 @@ All commands run from `fuzzer/` on FarmShare. The task files list every trial's 
 - `runs/pilot-1.6.46/tasks.txt` (pilot)
 - `runs/probe/tasks.txt` (headroom probe; also holds `png-plus.dict`)
 - `runs/ncheck/tasks.txt` (prior weight N)
+- `runs/xml/base-tasks.txt` and `runs/xml/probe/tasks.txt` (libxml2)
 
 Submit a task file with
 `slurm/fresh sbatch -c 16 --mem=60G -t <time> slurm/pack.sbatch <tasks file>`. Each trial's

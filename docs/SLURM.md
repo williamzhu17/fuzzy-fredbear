@@ -81,10 +81,19 @@ Fix: submit **every** `srun` and `sbatch` through `fuzzer/slurm/fresh`, which re
 everywhere is safe. All examples in this guide do.
 
 ```bash
-slurm/fresh srun -p interactive -q interactive -c 4 --mem=8G -t 1:00:00 --pty bash   # interactive shell
-slurm/fresh srun -p interactive -q interactive -c 8 --mem=16G -t 0:30:00 cargo build --release
+slurm/fresh srun -n 1 -p interactive -q interactive -c 4 --mem=8G -t 1:00:00 --pty bash   # interactive shell
+slurm/fresh srun -n 1 -p interactive -q interactive -c 8 --mem=16G -t 0:30:00 cargo build --release
 slurm/fresh sbatch slurm/trial.sbatch ...
 ```
+
+**Always pass `-n 1` to `srun`.** On Nov 17, `slurm/fresh srun -c 1 ... fredbear ...` started *two*
+copies of the command. One created `--out` and the other failed with "already exists". `-n 1`
+fixed it. `sbatch` scripts are not affected: their body runs once.
+
+**Use a new `--out` name after deleting one on another node.** After a compute node created
+`runs/x` and it was deleted from the desktop, a new job on that node still saw `runs/x` for a
+while, probably because of NFS attribute caching, and `fredbear` refused it. A different name
+avoids the problem.
 
 `squeue`/`sacct`/`scancel` are unaffected. Inside an sbatch script, `srun` is fine because Slurm
 sets that job's own variables.
