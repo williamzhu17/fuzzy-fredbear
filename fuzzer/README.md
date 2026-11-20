@@ -90,6 +90,22 @@ Things to know about this harness:
 5,533 at 60 s, still climbing quickly. About 2.1k executions per second, roughly 25× slower per
 execution than libpng.
 
+## Measuring a main run
+
+These scripts are used for the libxml2 main runs (`docs/RESULTS.md`, sections 6 and 7):
+
+| Script | Does |
+|---|---|
+| `scripts/inherited.sh <old version>` | Lists the union of the three base runs' queues as `runs/xml/inherited-<old>.names` and `.paths` |
+| `[OLD=2.14.5 NEW=2.14.6] scripts/xml-tasks.sh <root> <secs> "<seeds>" <policies...>` | Prints one trial command per line for the transition OLD → NEW (default 2.14.6 → 2.15.0), for `slurm/pack.sbatch` |
+| `scripts/run-trial.sh <out> <inherited names> <fredbear command>` | Runs a trial in node-local `$TMPDIR`, then keeps only the results and the trial's new inputs (`new/`), with `/usr/bin/time -v` in `time.txt` |
+| `targets/libxml2/build-cov.sh <version>` | Builds the same harness with Clang source coverage plus `targets/replay_main.c` into `build/<version>-cov/replay` |
+| `scripts/coverage.py` | Replays inherited and new inputs on that build and writes branch, line, region and function coverage at chosen times (`coverage-llvm.csv`) |
+| `scripts/analyze.py <root>` | Summarises branches, edges and new inputs per policy, with Mann–Whitney, A12 and Holm |
+
+fredbear writes `start_epoch`, the wall-clock time when fuzzing starts after the corpus loads, so
+new inputs can be placed on the same clock as `coverage.csv` by their mtimes.
+
 ## libpng
 
 ```bash

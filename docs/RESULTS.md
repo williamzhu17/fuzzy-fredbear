@@ -1,11 +1,11 @@
 # Stage 2 Results Log
 
-Results from real libpng fuzzing on FarmShare. Newest findings first in the summary; experiments
+Results from real fuzzing of libpng and libxml2 on FarmShare. Newest findings first in the summary; experiments
 are in the order they ran. Every run used the fuzzer in `fuzzer/`, on FarmShare `iron` nodes
 through Slurm (see [`SLURM.md`](SLURM.md)). Raw outputs are in `fuzzer/runs/` on FarmShare. That
 directory is git-ignored, so the numbers below are the record.
 
-## Summary (Nov 17, 2026)
+## Summary (updated Nov 18, 2026)
 
 **libxml2 (section 5), added Nov 17:**
 - **libxml2 has the headroom libpng lacks.** Base runs on 2.14.6 were still gaining 33–70 edges
@@ -20,6 +20,22 @@ directory is git-ignored, so the numbers below are the record.
   - This is one comparison out of six possible between the four policies and is uncorrected.
   - Edge gains overlap across all policies.
   - Treat it as a reason to run the full design, not a result.
+
+**libxml2 main run (section 6), Nov 17:** 5 policies × 20 trials × 15 min on 2.14.6 → 2.15.0.
+**No planned comparison is significant on any of the three outcomes** (independent branch
+coverage, edges, new inputs).
+- adaptive vs transfer: A12 = 0.41 on branches.
+- The probe's adaptive-vs-uniform hint shrank from A12 = 1.00 (n = 4) to 0.66 (n = 20).
+- transfer has the highest mean on every outcome, but only by about 0.5 sd.
+- fresh learns the same family mix as transfer within the 15 minutes, so the transferred prior
+  has little to add on this transition.
+
+**libxml2 small transition (section 7), Nov 18:** same design on 2.14.5 → 2.14.6 (89 changed
+library lines). **Transfer is significantly worse than fresh** on the primary outcome (A12 = 0.28,
+Holm p = 0.046) and on inputs. The prior was learned from seed-started base runs, which rank
+splice at the top; trials starting from the merged corpus favour copy_swap instead. Adaptive
+recovers to fresh's level and beats transfer on inputs (Holm p = 0.014). Within-campaign learning
+beats uniform here, unlike on the big transition.
 
 **libpng (sections 1–4):**
 
@@ -50,12 +66,13 @@ directory is git-ignored, so the numbers below are the record.
    limited by time are therefore noisy, so compare at a fixed execution count.
 
 **Open decisions:**
-- Add a target with more headroom (libxml2 or libtiff, both in PLAN v3 before the Stage 2 cut).
-- Change the main outcome to something that still moves on a plateau: time to reach changed
-  code, or coverage features.
-- Fix N = 10⁶ in the plan.
-- Decide whether trials on the new version use the extended dictionary, and if so whether to
-  redo the base runs with it.
+- Whether to build the prior from the same campaign phase it is used in (late base-run batches,
+  or a short run on the merged corpus), since section 7 points to a phase mismatch.
+- Why adaptive's family mix looks like fresh's although it follows the transfer model in 71% of
+  batches (section 7).
+- Fix N in the plan per target: 10⁶ for libpng, 10⁴ for libxml2.
+- For libpng only: whether trials use the extended dictionary, and if so whether to redo the base
+  runs with it.
 
 ## Setup common to all runs
 
@@ -231,6 +248,184 @@ the three merged 2.14.6 queues (13,547 inputs loaded, about 2,535 kept) and the 
 - **Disk:** the 16 trial folders took 4.5 GB, mostly copies of the 280 MB inherited corpus. Their
   `queue/` folders were deleted afterwards.
 
+## 6. Main run on libxml2 2.14.6 → 2.15.0 (Nov 17; jobs 1994460, 1994461)
+
+**Design, fixed before the results were looked at:**
+- **Policies:** uniform, fresh, transfer, adaptive and dts.
+- **Trials:** 20 per policy (seeds 1–20), 15 min each, limited by wall-clock time.
+- **Settings:** N = 10⁴, dts at its defaults (γ_prior = 0.999 and γ_data = 1 per batch).
+- **Inputs:** every trial starts from the merged 2.14.6 base queues and the pooled prior.
+- **Scheduling:** 16 trials at a time, seeds in the outer loop so every wave mixes all policies.
+- **How each trial runs:** through `scripts/run-trial.sh`, in node-local `/tmp`. The inherited
+  corpus copy never touches NFS. Only `coverage.csv`, `batches.jsonl`, `start_epoch`, `crashes/`,
+  `time.txt` and the trial's new inputs (`new/`) are kept.
+
+**Outcomes, each the gain over the trial's own t = 0 at 15 minutes:**
+1. **Branches (primary):** independent branch coverage. `scripts/coverage.py` replays the
+   inherited corpus plus the trial's new inputs on a Clang source-coverage build of 2.15.0
+   (`targets/libxml2/build-cov.sh`), excluding harness files. Out of 55,204 branches.
+2. **Edges:** fredbear's own edge count.
+3. **Inputs:** new corpus inputs, the policies' reward.
+
+**Comparisons:** adaptive vs transfer, adaptive vs uniform and transfer vs fresh. Each uses a
+two-sided Mann–Whitney test and A12, Holm-corrected across the three within each outcome
+(`scripts/analyze.py`). Every other pair is exploratory and uncorrected.
+
+**Smoke tests before launch** (jobs 1994439, 1994452):
+- **I/O stall, found and fixed.** With trials writing to NFS, a 90 s trial took 4 min 20 s, mostly
+  spent writing its 280 MB inherited-corpus copy. In local `/tmp`, 15 concurrent 120 s trials
+  took 177 s each. The remaining 54 s is executing the 13,547 inherited inputs once at startup,
+  which is not counted in the time budget.
+- **Memory:** 0.6 GB peak per trial (`time.txt`), so 16 trials need about 10 GB. The job requests
+  32 GB.
+- **Disk:** 2–4 MB per trial.
+- **The three outcomes are consistent.** The new-input count equals corpus growth in every trial,
+  and branch coverage starts at the same 10,161 in every trial and rises over time.
+
+**Results** (job 1994460: 100 of 100 trials completed, 1 h 50 min; coverage scored by job
+1994461):
+
+| Policy | Branches gained (primary) | Edges gained | New inputs | Executions per second |
+|---|---|---|---|---|
+| uniform | 45.5 ± 7.9 (33–62) | 36.9 ± 5.3 | 201.2 ± 17.8 | 1,292 |
+| fresh | 47.2 ± 8.8 (35–64) | 38.8 ± 7.0 | 210.2 ± 23.9 | 1,074 |
+| transfer | 49.6 ± 9.1 (38–67) | 40.6 ± 7.4 | 215.6 ± 15.0 | 1,058 |
+| adaptive | 46.2 ± 7.6 (32–63) | 38.2 ± 6.7 | 210.9 ± 17.8 | 1,061 |
+| dts | 47.1 ± 9.9 (31–69) | 38.2 ± 9.2 | 207.3 ± 23.7 | 1,119 |
+
+Each cell is mean ± sd over 20 trials (range in brackets), as the gain at 15 minutes over 10,161
+branches, about 6,456 edges and about 2,535 inputs at t = 0.
+
+**Planned comparisons** (Holm-corrected within each outcome):
+
+| Comparison | Branches: A12, p, Holm p | Edges: A12, Holm p | New inputs: A12, p, Holm p |
+|---|---|---|---|
+| adaptive vs transfer | 0.41, 0.32, 0.97 | 0.43, 1.00 | 0.44, 0.50, 0.87 |
+| adaptive vs uniform | 0.55, 0.59, 0.97 | 0.56, 1.00 | 0.66, 0.086, 0.26 |
+| transfer vs fresh | 0.58, 0.42, 0.97 | 0.56, 1.00 | 0.57, 0.43, 0.87 |
+
+**Findings:**
+- **No planned comparison is significant on any outcome.** The primary result is null: on this
+  transition, adaptive does not beat transfer (it is slightly behind, A12 = 0.41), and neither
+  learned prior separates from its baseline.
+- **The probe's hint did not replicate.** The probe had adaptive above uniform on new inputs with
+  A12 = 1.00 and 4 trials each. With 20 each it shrank to A12 = 0.66 (Holm p = 0.26). That is the
+  expected regression of a small-sample extreme.
+- **The direction is consistent but small.** transfer has the highest mean on all three outcomes
+  and uniform the lowest. The gaps are about 4 branches, or about 0.5 sd. The largest
+  exploratory difference, transfer vs uniform on new inputs (A12 = 0.72, uncorrected p = 0.018),
+  is one of 21 exploratory tests across the three outcomes, so it is not evidence by itself.
+- **Over time:** branch gains at 5 and 10 minutes show the same picture. Every planned Holm p is
+  at least 0.83, and uniform even has the highest mean at 5 minutes.
+
+**Why the policies end up close:**
+- **Fresh learns the old ranking quickly.** With about 200 successes per trial, fresh puts about
+  50% of its mutations into `insert` and `splice` by the end, the same as transfer (51%). Every
+  learned policy gives `delete` only 1–4%. So transfer's head start is worth little after the
+  first minutes.
+- **The controller acts as designed.** adaptive ended at P(H_T | D) = 0.74 (0.49–0.86), followed
+  the transfer model in 71% of batches, and fitted c = 0.26 (0.18–0.30). Following the transfer
+  model is reasonable here, but it can only be as good as transfer, which itself barely beats
+  fresh.
+- **Learned policies are about 18% slower** (1,058–1,119 against 1,292 executions per second for
+  uniform), because they favour `insert` and `splice`, which make inputs longer. Under a
+  wall-clock budget this costs them about a sixth of their executions, which offsets part of
+  their gain per execution.
+
+**Other checks:** no crashes in any trial. Peak memory was 0.61–0.64 GB per trial. The 100 trial
+folders take 1.2 GB.
+
+## 7. Small transition: libxml2 2.14.5 → 2.14.6 (Nov 18; jobs 1995251–1995253, 1995322, 1995323)
+
+**Question:** the plan predicts that transfer helps most when old and new versions are close.
+Section 6 used a large transition (44 changed library files, about 44,600 changed lines) and
+found nothing. This run repeats it on the smallest available step with the same harness:
+2.14.5 → 2.14.6, 7 library files and 89 changed lines (`fuzz/xml.c`, `fuzz/fuzz.c`, `fuzz/fuzz.h`
+unchanged).
+
+**Design, fixed before any data was collected:** identical to section 6 except for the versions.
+- **Base runs:** three 60 min uniform runs on 2.14.5 from its own genSeed seeds
+  (`runs/xml/small/base-tasks.txt`). Their merged queues are the inherited corpus
+  (`scripts/inherited.sh 2.14.5`) and their pooled logs the prior.
+- **Main run:** uniform, fresh, transfer, adaptive and dts; 20 trials per policy (seeds 1–20),
+  15 min each, wall-clock bound; N = 10⁴; dts at its defaults; 16 trials at a time through
+  `scripts/run-trial.sh` (tasks from `OLD=2.14.5 NEW=2.14.6 scripts/xml-tasks.sh`).
+- **Outcomes:** gains at 15 min in branches (primary, replayed on a source-coverage build of
+  2.14.6), edges and inputs.
+- **Comparisons:** adaptive vs transfer, adaptive vs uniform, transfer vs fresh; two-sided
+  Mann–Whitney and A12, Holm-corrected within each outcome (`scripts/analyze.py`). Everything
+  else is exploratory.
+- **Expectation if the plan is right:** transfer and adaptive beat fresh and uniform by more than
+  in section 6.
+
+**Base runs** (job 1995252): 4,321–4,573 inputs and 6,465–6,520 edges after 60 min, close to
+2.14.6's 6,443–6,534. The merged queues hold 13,019 unique inputs.
+
+**Smoke test** (job 1995253; one 120 s trial per policy): all five completed; peak memory
+0.64 GB per trial. Coverage starts at 10,764 of 57,870 branches in every trial. **Headroom is much
+smaller than on the big transition.** At 120 s the trials gained 16–19 inputs, 1–5 edges and 0–2
+branches, against about 50 inputs, about 14 edges and 4–28 branches in section 6's smoke test.
+The merged 2.14.5 corpus already reaches nearly everything 2.14.6 can, so expect small 15-minute
+gains, many ties, and less power than in section 6.
+
+**Results** (job 1995322: 100 of 100 trials completed, 1 h 50 min; coverage scored by job
+1995323). Gains at 15 min, mean ± sd over 20 trials:
+
+| Policy | Branches (primary) | Edges | Inputs | Exec/s |
+|---|---|---|---|---|
+| uniform | 12.6 ± 4.2 | 16.9 ± 3.6 | 114.5 ± 9.7 | 858 |
+| fresh | 18.2 ± 8.1 | 17.6 ± 4.9 | 157.3 ± 21.0 | 873 |
+| transfer | 12.7 ± 6.1 | 15.8 ± 4.7 | 142.2 ± 21.3 | 793 |
+| adaptive | 19.4 ± 10.2 | 18.9 ± 6.0 | 162.1 ± 17.5 | 814 |
+| dts | 14.7 ± 4.2 | 16.8 ± 4.3 | 152.6 ± 18.6 | 876 |
+
+**Planned comparisons** (Holm-corrected within each outcome):
+
+| Comparison | Branches A12 (Holm p) | Edges A12 (Holm p) | Inputs A12 (Holm p) |
+|---|---|---|---|
+| adaptive vs transfer | 0.69 (0.076) | 0.65 (0.31) | 0.75 (0.014) |
+| adaptive vs uniform | 0.68 (0.076) | 0.59 (0.40) | 1.00 (< 10⁻⁴) |
+| transfer vs fresh | **0.28** (0.046) | 0.38 (0.40) | **0.31** (0.044) |
+
+**Findings:**
+1. **Transfer is worse than fresh**, the opposite of the plan's prediction: significant on the
+   primary outcome (A12 = 0.28, Holm p = 0.046) and on inputs (A12 = 0.31, Holm p = 0.044), same
+   direction but not significant on edges. Transfer is no better than uniform on branches
+   (12.7 vs 12.6).
+2. **Adaptive recovers.** It beats transfer on inputs (Holm p = 0.014) and is ahead on branches
+   and edges (A12 0.69 and 0.65, not significant). It ties fresh (exploratory A12 = 0.52 on
+   branches, 0.53 on inputs).
+3. **Learning within the campaign helps here, unlike section 6.** Every learned policy beats
+   uniform on inputs (A12 0.87–1.00); fresh beats uniform on branches (exploratory A12 = 0.71,
+   p = 0.025). In section 6, fresh and uniform were close.
+4. **At 5 and 10 min** the same pattern holds but weaker: adaptive vs uniform on inputs is
+   significant at both (Holm p ≤ 0.0012); no planned branch comparison is.
+
+**Why transfer hurts:** the 2.14.5 base runs ranked the families in a different regime. They
+started from 366 seeds; the main trials start from the merged 13,019-input corpus. Per-execution
+success rates (×10⁻⁴):
+
+| | insert | copy_swap | splice | rest (range) |
+|---|---|---|---|---|
+| 2.14.5 base runs (the prior) | 11.2 | 6.2 | 11.4 | 1.0–7.6 |
+| 2.14.6 trials, all policies pooled | about 2.8 | about 2.5 | about 1.8 | 0.1–1.5 |
+
+In the base runs splice ties insert for the top and copy_swap is mid-table; in the trials,
+copy_swap is second and splice has fallen behind it. Transfer therefore spends 14.6% of its
+mutations on splice and 16.7% on copy_swap; fresh, learning from the trial alone, spends 7.8% and
+23.4%. In section 6 splice stayed strong in the trials (2.5–2.8), so the same mismatch did not
+arise. The base-run rates are also 4–7× higher than in-trial rates for every family, so the prior
+is overconfident in absolute terms, not just in ranking.
+
+**Controller:** adaptive ended at P(T) = 0.74 on average (range 0.23–0.87) and followed the
+transfer model in 71% of batches, yet its mix (51% insert, 17.5% copy_swap, 11.1% splice) is not
+transfer's, and it outperformed transfer. Why it ends up near fresh while nominally following
+transfer has not been checked.
+
+**Speed** differs less than in section 6: 793–876 executions per second for all policies.
+
+**Other checks:** no crashes; peak memory 0.64–0.68 GB per trial; 513 MB on disk.
+
 ## Reproducing
 
 All commands run from `fuzzer/` on FarmShare. The task files list every trial's exact command:
@@ -238,7 +433,10 @@ All commands run from `fuzzer/` on FarmShare. The task files list every trial's 
 - `runs/pilot-1.6.46/tasks.txt` (pilot)
 - `runs/probe/tasks.txt` (headroom probe; also holds `png-plus.dict`)
 - `runs/ncheck/tasks.txt` (prior weight N)
-- `runs/xml/base-tasks.txt` and `runs/xml/probe/tasks.txt` (libxml2)
+- `runs/xml/base-tasks.txt`, `runs/xml/probe/tasks.txt` and `runs/xml/main/tasks.txt` (libxml2;
+  the main run's tasks were generated by `scripts/xml-tasks.sh`)
+- `runs/xml/small/` (section 7: `build.sbatch`, `base-tasks.txt`, `smoke.sbatch`, `main/tasks.txt`,
+  `main/coverage.sbatch`)
 
 Submit a task file with
 `slurm/fresh sbatch -c 16 --mem=60G -t <time> slurm/pack.sbatch <tasks file>`. Each trial's

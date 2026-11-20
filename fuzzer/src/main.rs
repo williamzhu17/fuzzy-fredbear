@@ -165,6 +165,10 @@ fn main() -> Result<(), Error> {
     }
 
     let start = Instant::now();
+    // Wall-clock time when fuzzing starts (after the corpus has loaded): t = 0 in coverage.csv.
+    // Lets scripts/coverage.py place each new queue/ input on the same clock by its mtime.
+    let epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    fs::write(args.out.join("start_epoch"), format!("{:.6}\n", epoch.as_secs_f64()))?;
     let cfg = PolicyConfig {
         kind: args.policy,
         batch: args.batch,
