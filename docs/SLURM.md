@@ -172,6 +172,12 @@ Tested: a clean Rust build takes about 45 s on 8 CPUs, and each libpng version a
 All five plan versions (1.6.39, 1.6.40, 1.6.45, 1.6.46, 1.6.47) build and run on Linux. The binaries are self-contained, so trials need
 neither the toolchain nor `CPLUS_INCLUDE_PATH`.
 
+**Not every node has LLVM.** iron-04 has no `clang`, `llvm-cov-18` or `llvm-profdata-18` (found
+Nov 19, when a coverage job landed there and failed). Fuzzing trials run anywhere, since the
+binaries are self-contained, but jobs that compile C or score coverage need
+`#SBATCH --exclude=iron-04` and a fail-fast check such as
+`command -v llvm-cov-18 >/dev/null || exit 1`.
+
 Smoke test (Nov 16): a 60 s uniform base run on 1.6.45 through `trial.sbatch`, then `adaptive`
 and `fresh` 30 s trials on 1.6.46 through `pack.sbatch` (chained with
 `--dependency=afterok:<jobid>`). All three finished and reached about 1,240 edges, at roughly

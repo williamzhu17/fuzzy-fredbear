@@ -27,7 +27,7 @@ use libafl_bolts::ToSlice;
 use libafl_bolts::rands::StdRand;
 use libafl_bolts::tuples::tuple_list;
 
-use fredbear::mutator::{FAMILIES, FamilyMutator, base_counts_from_logs};
+use fredbear::mutator::{FAMILIES, FamilyMutator, base_counts_in_window};
 use fredbear::policy::{Policy, PolicyConfig, PolicyKind, PriorSet};
 use fredbear::toy;
 
@@ -68,6 +68,10 @@ struct Args {
     /// Only base-run batches before this many seconds feed the prior (PLAN section 3: first hour).
     #[arg(long, default_value_t = 3600.0)]
     base_cutoff: f64,
+    /// Only base-run batches after this many seconds feed the prior (0: from the start). Use it to
+    /// build the prior from the late, mature-corpus phase of the base runs.
+    #[arg(long, default_value_t = 0.0)]
+    base_from: f64,
     /// N: the most new-version observations the old evidence is worth, per family.
     #[arg(long, default_value_t = 5000.0)]
     cap_n: f64,
@@ -101,7 +105,7 @@ fn main() -> Result<(), Error> {
         return Err(Error::illegal_argument(format!("--policy {:?} needs --base-log", args.policy)));
     }
     let priors = if needs_prior {
-        let base = base_counts_from_logs(&args.base_log, args.base_cutoff).map_err(Error::illegal_argument)?;
+        let base = base_counts_in_window(&args.base_log, args.base_from, args.base_cutoff).map_err(Error::illegal_argument)?;
         base.validate(&FAMILIES).map_err(Error::illegal_argument)?;
         PriorSet::build(&base, args.cap_n, args.seed)
     } else {

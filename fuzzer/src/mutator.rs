@@ -159,6 +159,16 @@ pub fn base_counts_from_log(path: &std::path::Path, cutoff: f64) -> Result<BaseC
 /// Pool several base runs: sum each file's per-family counts over its own batches that ended
 /// before `cutoff` seconds (so the cutoff means the first `cutoff` seconds of every run).
 pub fn base_counts_from_logs(paths: &[std::path::PathBuf], cutoff: f64) -> Result<BaseCounts, String> {
+    base_counts_in_window(paths, 0.0, cutoff)
+}
+
+/// Like `base_counts_from_logs`, but only batches that ended between `from` and `cutoff` seconds
+/// count. With `from` > 0 the prior comes from late in each base run, when its corpus is mature,
+/// rather than being dominated by the first minutes of growth from the seeds.
+pub fn base_counts_in_window(paths: &[std::path::PathBuf], from: f64, cutoff: f64) -> Result<BaseCounts, String> {
+    if !(from < cutoff) {
+        return Err(format!("empty window: from {from}s is not before cutoff {cutoff}s"));
+    }
     let k = FAMILIES.len();
     let (mut s, mut n) = (vec![0.0; k], vec![0.0; k]);
     for path in paths {
@@ -168,8 +178,12 @@ pub fn base_counts_from_logs(paths: &[std::path::PathBuf], cutoff: f64) -> Resul
             let line = line.map_err(|e| e.to_string())?;
             let v: serde_json::Value =
                 serde_json::from_str(&line).map_err(|e| format!("{}:{}: {e}", path.display(), i + 1))?;
-            if v["t"].as_f64().ok_or("missing t")? > cutoff {
+            let t = v["t"].as_f64().ok_or("missing t")?;
+            if t > cutoff {
                 break;
+            }
+            if t < from {
+                continue;
             }
             for a in 0..k {
                 let (sa, na) = (v["s"][a].as_f64().ok_or("missing s")?, v["n"][a].as_f64().ok_or("missing n")?);
@@ -179,7 +193,7 @@ pub fn base_counts_from_logs(paths: &[std::path::PathBuf], cutoff: f64) -> Resul
             }
         }
         if used == 0.0 {
-            return Err(format!("{}: no batches before {cutoff}s", path.display()));
+            return Err(format!("{}: no batches between {from}s and {cutoff}s", path.display()));
         }
     }
     if paths.is_empty() {
@@ -236,6 +250,25 @@ mod tests {
         let late = write_log("pool-late", &[r#"{"t":9.0,"n":[1,0,0,0,0,0,0,0,0],"s":[0,0,0,0,0,0,0,0,0]}"#]);
         assert!(base_counts_from_logs(&[a, late], 5.0).is_err());
         assert!(base_counts_from_logs(&[], 5.0).is_err());
+    }
+
+    #[test]
+    fn base_counts_window_skips_early_batches() {
+        let a = write_log("window", &[
+            r#"{"t":1.0,"n":[100,0,0,0,0,0,0,0,0],"s":[90,0,0,0,0,0,0,0,0]}"#,
+            r#"{"t":6.0,"n":[10,0,0,0,0,0,0,0,0],"s":[1,0,0,0,0,0,0,0,0]}"#,
+            r#"{"t":8.0,"n":[20,0,0,0,0,0,0,0,0],"s":[2,0,0,0,0,0,0,0,0]}"#,
+            r#"{"t":12.0,"n":[1000,0,0,0,0,0,0,0,0],"s":[0,0,0,0,0,0,0,0,0]}"#,
+        ]);
+        let w = base_counts_in_window(&[a.clone()], 5.0, 10.0).unwrap();
+        assert_eq!((w.n[0], w.s[0]), (30.0, 3.0));
+        // from = 0 is the plain cutoff.
+        let all = base_counts_in_window(&[a.clone()], 0.0, 10.0).unwrap();
+        let old = base_counts_from_logs(&[a.clone()], 10.0).unwrap();
+        assert_eq!((all.n[0], all.s[0]), (old.n[0], old.s[0]));
+        // No batch inside the window, or an empty window, is an error.
+        assert!(base_counts_in_window(&[a.clone()], 9.0, 11.0).is_err());
+        assert!(base_counts_in_window(&[a], 10.0, 10.0).is_err());
     }
 
     #[test]

@@ -30,6 +30,13 @@ coverage, edges, new inputs).
 - fresh learns the same family mix as transfer within the 15 minutes, so the transferred prior
   has little to add on this transition.
 
+**Late-phase prior (section 8), Nov 19:** a prior built from only the last 30 minutes of the base
+runs (`--base-from 1800`) matches the trials' family rates much better, but **transfer-late and
+adaptive-late do not beat fresh on either transition** (no planned comparison significant). A fresh
+control rerun in that job scored below section 7's fresh arm by as much as section 7's transfer
+gap (A12 = 0.32 on inputs). **The section 7 result below is therefore not established:**
+variation between jobs is as large as the effects being looked for.
+
 **libxml2 small transition (section 7), Nov 18:** same design on 2.14.5 → 2.14.6 (89 changed
 library lines). **Transfer is significantly worse than fresh** on the primary outcome (A12 = 0.28,
 Holm p = 0.046) and on inputs. The prior was learned from seed-started base runs, which rank
@@ -66,8 +73,10 @@ beats uniform here, unlike on the big transition.
    limited by time are therefore noisy, so compare at a fixed execution count.
 
 **Open decisions:**
-- Whether to build the prior from the same campaign phase it is used in (late base-run batches,
-  or a short run on the merged corpus), since section 7 points to a phase mismatch.
+- Whether to keep going with transfer at all: neither the full-hour nor the late-phase prior beat
+  fresh on either transition (sections 6–8).
+- How to compare policies when the same policy varies this much between jobs (section 8): run all
+  arms in one job, pin nodes, or compare at a fixed execution count.
 - Why adaptive's family mix looks like fresh's although it follows the transfer model in 71% of
   batches (section 7).
 - Fix N in the plan per target: 10⁶ for libpng, 10⁴ for libxml2.
@@ -388,7 +397,8 @@ gains, many ties, and less power than in section 6.
 | transfer vs fresh | **0.28** (0.046) | 0.38 (0.40) | **0.31** (0.044) |
 
 **Findings:**
-1. **Transfer is worse than fresh**, the opposite of the plan's prediction: significant on the
+1. **Transfer is worse than fresh** (but see section 8: a rerun of fresh in another job scored as
+   far below this fresh arm, so this is not established), the opposite of the plan's prediction: significant on the
    primary outcome (A12 = 0.28, Holm p = 0.046) and on inputs (A12 = 0.31, Holm p = 0.044), same
    direction but not significant on edges. Transfer is no better than uniform on branches
    (12.7 vs 12.6).
@@ -426,6 +436,93 @@ transfer has not been checked.
 
 **Other checks:** no crashes; peak memory 0.64–0.68 GB per trial; 513 MB on disk.
 
+## 8. Late-phase prior on both transitions (Nov 19; exploratory; jobs 1998743, 1998747, 1998761, 1998971)
+
+**Question:** section 7 suggests transfer failed because its prior came from the wrong phase. The
+base runs start from 366 seeds, and about 80% of their successes come in the first 15 minutes,
+so a prior pooled over the whole hour mostly describes early growth. The main trials start from
+the merged, mature corpus instead. Does a prior built only from the late part of the base runs
+help?
+
+**Why this is exploratory:** the window was chosen after looking at sections 6 and 7. Per
+execution, base-run family rates in each window were compared with the uniform trials' rates
+from those sections (Spearman correlation across the 9 families):
+
+| Base-run window | 2.14.5 vs 2.14.6 trials | 2.14.6 vs 2.15.0 trials | Base successes (2.14.5) |
+|---|---|---|---|
+| 0–60 min (sections 6 and 7) | 0.72 | 0.88 | 12,653 |
+| 0–15 min | 0.75 | 0.88 | 10,177 |
+| 15–30 min | 0.90 | 0.95 | 1,201 |
+| 30–45 min | 0.93 | 0.87 | 737 |
+| 45–60 min | 0.93 | 0.97 | 538 |
+
+From 30 min on, the absolute rates also match the trials (insert 3.2–3.7 × 10⁻⁴ against 3.05 in
+the 2.14.6 trials), where the full-hour prior was 4–7× too high. copy_swap is still rated low
+(1.7–2.1 against 2.6). The window picked is **30–60 min** (`--base-from 1800`), which has more
+than twice the successes of the last 15 minutes alone. Because the window was chosen by matching
+it to the trials' own rates, any gain here is an optimistic estimate.
+
+**Design, fixed before any trial with the late prior ran:**
+- **Policies:** fresh (rerun in the same job as a control), transfer-late and adaptive-late
+  (`--base-from 1800`, everything else as in sections 6 and 7, N = 10⁴).
+- **Transitions:** 2.14.5 → 2.14.6 (`runs/xml/late/small/`) and 2.14.6 → 2.15.0
+  (`runs/xml/late/big/`).
+- **Trials:** 20 per policy and transition (seeds 1–20), 15 min, wall-clock bound; 120 trials,
+  16 at a time, interleaving the two transitions (`runs/xml/late/tasks.txt`).
+- **Outcomes:** as before; branches are primary.
+- **Comparisons, per transition, Holm-corrected within each outcome:** transfer-late vs fresh,
+  adaptive-late vs fresh, and transfer-late vs transfer-full. transfer-full is the transfer arm
+  of section 6 or 7, linked in as `transfer-full-<seed>` and rescored in the same coverage job.
+  It ran in an earlier job, so that comparison mixes in any difference between jobs. The fresh
+  rerun against the earlier fresh arm is reported as a check on that.
+
+**Smoke test** (job 1998747; one 120 s trial each of transfer-late and adaptive-late per transition): all four completed, 0.62–0.64 GB peak. The late prior changes the early mix as intended: on 2.14.6, transfer-late gives copy_swap 16.5% of its first 2 minutes against 7.3% for transfer-full (same seed), and bitflip and interesting less.
+
+**Results** (job 1998761: 120 of 120 trials completed, 2 h 05 min, on iron-04; coverage scored
+by job 1998971, after job 1998762 failed because iron-04 has no LLVM tools). Gains at 15 min,
+mean over 20 trials (transfer-full rescored in the same coverage job):
+
+| Transition | Policy | Branches (primary) | Edges | Inputs | Exec/s |
+|---|---|---|---|---|---|
+| 2.14.5 → 2.14.6 | fresh | 16.6 | 15.8 | 142.1 | 810 |
+| | transfer-late | 13.2 | 16.9 | 158.3 | 803 |
+| | adaptive-late | 15.4 | 19.4 | 152.9 | 787 |
+| | transfer-full (section 7) | 13.1 | 15.8 | 142.2 | 793 |
+| 2.14.6 → 2.15.0 | fresh | 44.1 | 34.5 | 208.8 | 1,079 |
+| | transfer-late | 46.2 | 36.5 | 208.7 | 1,037 |
+| | adaptive-late | 48.4 | 39.0 | 204.2 | 1,033 |
+| | transfer-full (section 6) | 49.5 | 40.6 | 215.6 | 1,058 |
+
+**Planned comparisons** (A12, Holm p within each outcome and transition):
+
+| Comparison | Small: branches | Small: edges | Small: inputs | Big: branches | Big: edges | Big: inputs |
+|---|---|---|---|---|---|---|
+| transfer-late vs fresh | 0.40 (0.89) | 0.59 (0.71) | 0.66 (0.25) | 0.51 (0.89) | 0.55 (0.64) | 0.53 (1.0) |
+| adaptive-late vs fresh | 0.50 (1.0) | 0.69 (0.11) | 0.62 (0.25) | 0.64 (0.42) | 0.69 (0.13) | 0.46 (1.0) |
+| transfer-late vs transfer-full | 0.56 (1.0) | 0.58 (0.71) | 0.66 (0.25) | 0.38 (0.42) | 0.34 (0.18) | 0.42 (1.0) |
+
+**Findings:**
+1. **The late prior does not beat fresh on either transition.** No planned comparison is
+   significant on any outcome. The window was tuned with hindsight, so even this optimistic
+   version of transfer shows no gain.
+2. **It no longer hurts.** On the small transition transfer-late is level with fresh rather than
+   below it.
+3. **The fresh control did not reproduce section 7's fresh arm.** The same policy, seeds and
+   binary scored lower in this job: on the small transition 142 inputs against 157 (A12 = 0.32,
+   p = 0.056) and 16.6 branches against 18.2; on the big transition 34.5 edges against 38.8
+   (A12 = 0.35, p = 0.10). Fresh also ran about 7% slower on the small transition (810 against
+   873 executions per second); this job ran on iron-04, section 7's on iron-02. Against this
+   job's fresh, section 7's transfer arm is no longer significantly worse (branches A12 = 0.62,
+   p = 0.18; inputs A12 = 0.50).
+4. **Rescoring is reproducible.** Re-replaying section 6 and 7's transfer trials gave the same
+   branch count at 15 min, within ±3 branches (37 of 40 trials within ±1).
+
+**What this means for section 7:** its one significant result, transfer below fresh (Holm
+p = 0.046), is about the size of the difference between two runs of the same policy in different
+jobs. Treat it as not established. The difference between jobs, A12 down to 0.32 for identical
+arms, is as large as every effect these experiments were looking for, so comparisons across
+jobs or nodes are not trustworthy, and within-job effects of this size need more trials.
+
 ## Reproducing
 
 All commands run from `fuzzer/` on FarmShare. The task files list every trial's exact command:
@@ -435,6 +532,9 @@ All commands run from `fuzzer/` on FarmShare. The task files list every trial's 
 - `runs/ncheck/tasks.txt` (prior weight N)
 - `runs/xml/base-tasks.txt`, `runs/xml/probe/tasks.txt` and `runs/xml/main/tasks.txt` (libxml2;
   the main run's tasks were generated by `scripts/xml-tasks.sh`)
+- `runs/xml/late/` (section 8: `build.sbatch`, `smoke-tasks.txt`, `tasks.txt`, `coverage.sbatch`;
+  analyse with `scripts/analyze.py runs/xml/late/<small|big> --planned
+  transfer-late:fresh,adaptive-late:fresh,transfer-late:transfer-full`)
 - `runs/xml/small/` (section 7: `build.sbatch`, `base-tasks.txt`, `smoke.sbatch`, `main/tasks.txt`,
   `main/coverage.sbatch`)
 

@@ -32,6 +32,8 @@ $B --target toy-v2 --policy adaptive --base-log runs/base1/batches.jsonl \
 - Base logs are pooled by summing each family's counts. The cutoff applies to each run's own
   clock. The prior's weight is still capped at `--cap-n` per family, so pooling sharpens the
   rates without strengthening the prior.
+- `--base-from <secs>` (default 0) also drops each run's batches before that time, so the prior
+  can come from the late, mature-corpus part of the base runs (`docs/RESULTS.md`, section 8).
 - Corpus directories are loaded in the order given. An input that adds no coverage over those
   loaded before it is kept as disabled (stored but never mutated), so this is a one-pass merge,
   not a full minimization. List the directories in the same order for every trial.

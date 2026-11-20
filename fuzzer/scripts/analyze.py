@@ -78,7 +78,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("root")
     ap.add_argument("--t", type=int, default=900)
+    ap.add_argument("--planned", help="planned comparisons as a:b,c:d (default: the three above)")
     a = ap.parse_args()
+    planned_pairs = ([tuple(x.split(":")) for x in a.planned.split(",")] if a.planned else PLANNED)
 
     data = defaultdict(lambda: defaultdict(list))  # outcome -> policy -> values
     llvm = defaultdict(dict)
@@ -101,23 +103,24 @@ def main():
             print(f"\n## {outcome}: no data")
             continue
         print(f"\n## {outcome} gained by t = {a.t} s")
-        print(f"{'policy':10s} {'n':>3s} {'mean':>8s} {'median':>8s} {'sd':>7s} {'min':>6s} {'max':>6s}")
-        for p in ("uniform", "fresh", "transfer", "adaptive", "dts"):
+        print(f"{'policy':14s} {'n':>3s} {'mean':>8s} {'median':>8s} {'sd':>7s} {'min':>6s} {'max':>6s}")
+        known = ["uniform", "fresh", "transfer", "adaptive", "dts"]
+        for p in [k for k in known if k in pols] + sorted(set(pols) - set(known)):
             v = pols.get(p)
             if v:
                 sd = statistics.stdev(v) if len(v) > 1 else 0.0
-                print(f"{p:10s} {len(v):3d} {statistics.mean(v):8.1f} {statistics.median(v):8.1f} "
+                print(f"{p:14s} {len(v):3d} {statistics.mean(v):8.1f} {statistics.median(v):8.1f} "
                       f"{sd:7.1f} {min(v):6.0f} {max(v):6.0f}")
-        planned = [(x, y) for x, y in PLANNED if x in pols and y in pols]
+        planned = [(x, y) for x, y in planned_pairs if x in pols and y in pols]
         ps = [mann_whitney(pols[x], pols[y]) for x, y in planned]
         print("planned (Holm across these):")
         for (x, y), p, ph in zip(planned, ps, holm(ps)):
-            print(f"  {x:9s} vs {y:9s} A12 = {a12(pols[x], pols[y]):.2f}  p = {p:.4f}  Holm p = {ph:.4f}")
+            print(f"  {x:13s} vs {y:13s} A12 = {a12(pols[x], pols[y]):.2f}  p = {p:.4f}  Holm p = {ph:.4f}")
         print("exploratory (uncorrected):")
         for x, y in combinations(sorted(pols), 2):
-            if (x, y) in PLANNED or (y, x) in PLANNED:
+            if (x, y) in planned_pairs or (y, x) in planned_pairs:
                 continue
-            print(f"  {x:9s} vs {y:9s} A12 = {a12(pols[x], pols[y]):.2f}  p = {mann_whitney(pols[x], pols[y]):.4f}")
+            print(f"  {x:13s} vs {y:13s} A12 = {a12(pols[x], pols[y]):.2f}  p = {mann_whitney(pols[x], pols[y]):.4f}")
 
 
 if __name__ == "__main__":
