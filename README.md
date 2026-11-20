@@ -22,6 +22,8 @@ weighs both options and detects when old experience has become misleading.
    operator families, and its next steps.
 5. [`docs/SLURM.md`](docs/SLURM.md): building and running fuzzing jobs on Stanford FarmShare
    compute nodes with Slurm.
+6. [`docs/RESULTS.md`](docs/RESULTS.md): Stage 2 results log: base runs, pilot, headroom probe and
+   the prior-weight check on libpng.
 
 ## Layout
 
@@ -31,6 +33,7 @@ weighs both options and detects when old experience has become misleading.
 ├── requirements.txt      pinned Python dependencies
 ├── docs/
 │   ├── PLAN.md           current project plan (v3)
+│   ├── RESULTS.md        Stage 2 results log (real fuzzing on libpng)
 │   ├── SLURM.md          running jobs on FarmShare compute nodes
 │   └── archive/
 │       └── PLAN_v2.md    plan before the Stage 1 simulation

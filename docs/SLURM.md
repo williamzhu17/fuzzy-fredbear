@@ -56,6 +56,10 @@ From <https://docs.farmshare.stanford.edu/docs/storage/>, plus what this account
   add up. If `~` gets close to 50 GB, point `--out` at `/scratch/users/$USER/fredbear/...` and copy
   back only what you keep (`coverage.csv`, `batches.jsonl`, the base runs' `queue/`). Check usage
   with `du -sh ~/cs238 /scratch/users/$USER`.
+- Each trial on v+1 copies its whole inherited corpus into its own `queue/`. With three base
+  queues merged that is about 60 MB per trial, so 360 main-run trials come to about 22 GB. Point
+  the main runs' `--out` at `/scratch`, or delete each trial's `queue/` once it finishes: the
+  analysis needs only `coverage.csv` and `batches.jsonl`, and only base-run queues get reused.
 
 ## Gotcha: submitting from inside a job (OnDemand desktop)
 
@@ -77,10 +81,19 @@ Fix: submit **every** `srun` and `sbatch` through `fuzzer/slurm/fresh`, which re
 everywhere is safe. All examples in this guide do.
 
 ```bash
-slurm/fresh srun -p interactive -q interactive -c 4 --mem=8G -t 1:00:00 --pty bash   # interactive shell
-slurm/fresh srun -p interactive -q interactive -c 8 --mem=16G -t 0:30:00 cargo build --release
+slurm/fresh srun -n 1 -p interactive -q interactive -c 4 --mem=8G -t 1:00:00 --pty bash   # interactive shell
+slurm/fresh srun -n 1 -p interactive -q interactive -c 8 --mem=16G -t 0:30:00 cargo build --release
 slurm/fresh sbatch slurm/trial.sbatch ...
 ```
+
+**Always pass `-n 1` to `srun`.** On Nov 17, `slurm/fresh srun -c 1 ... fredbear ...` started *two*
+copies of the command. One created `--out` and the other failed with "already exists". `-n 1`
+fixed it. `sbatch` scripts are not affected: their body runs once.
+
+**Use a new `--out` name after deleting one on another node.** After a compute node created
+`runs/x` and it was deleted from the desktop, a new job on that node still saw `runs/x` for a
+while, probably because of NFS attribute caching, and `fredbear` refused it. A different name
+avoids the problem.
 
 `squeue`/`sacct`/`scancel` are unaffected. Inside an sbatch script, `srun` is fine because Slurm
 sets that job's own variables.
@@ -158,6 +171,12 @@ slurm/fresh sbatch slurm-logs/build.sbatch
 Tested: a clean Rust build takes about 45 s on 8 CPUs, and each libpng version about 10 s more.
 All five plan versions (1.6.39, 1.6.40, 1.6.45, 1.6.46, 1.6.47) build and run on Linux. The binaries are self-contained, so trials need
 neither the toolchain nor `CPLUS_INCLUDE_PATH`.
+
+**Not every node has LLVM.** iron-04 has no `clang`, `llvm-cov-18` or `llvm-profdata-18` (found
+Nov 19, when a coverage job landed there and failed). Fuzzing trials run anywhere, since the
+binaries are self-contained, but jobs that compile C or score coverage need
+`#SBATCH --exclude=iron-04` and a fail-fast check such as
+`command -v llvm-cov-18 >/dev/null || exit 1`.
 
 Smoke test (Nov 16): a 60 s uniform base run on 1.6.45 through `trial.sbatch`, then `adaptive`
 and `fresh` 30 s trials on 1.6.46 through `pack.sbatch` (chained with

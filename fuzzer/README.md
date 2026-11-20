@@ -27,6 +27,19 @@ $B --target toy-v2 --policy adaptive --base-log runs/base1/batches.jsonl \
    --corpus runs/base1/queue --dict dicts/toy.dict --secs 3600 --seed 1 --out runs/v2-adaptive-1
 ```
 
+**Several base runs.** `--base-log` and `--corpus` each take one or more paths, for example
+`--base-log runs/base-1.6.45-{1,2,3}/batches.jsonl --corpus runs/base-1.6.45-{1,2,3}/queue`.
+- Base logs are pooled by summing each family's counts. The cutoff applies to each run's own
+  clock. The prior's weight is still capped at `--cap-n` per family, so pooling sharpens the
+  rates without strengthening the prior.
+- `--base-from <secs>` (default 0) also drops each run's batches before that time, so the prior
+  can come from the late, mature-corpus part of the base runs (`docs/RESULTS.md`, section 8).
+- Corpus directories are loaded in the order given. An input that adds no coverage over those
+  loaded before it is kept as disabled (stored but never mutated), so this is a one-pass merge,
+  not a full minimization. List the directories in the same order for every trial.
+- Every input loaded, disabled ones included, is written to the trial's own `queue/`. Three
+  merged libpng queues are about 60 MB per trial.
+
 `--out` must not exist yet. Outputs:
 
 | File | Contents |
@@ -34,6 +47,66 @@ $B --target toy-v2 --policy adaptive --base-log runs/base1/batches.jsonl \
 | `coverage.csv` | `t,execs,corpus,edges` about once a second. The `t=0` row is the inherited corpus's own coverage. |
 | `batches.jsonl` | One line per batch of 256 executions: followed model, P(H_T\|D), fitted log c, executions and successes per family. |
 | `queue/`, `crashes/` | Corpus (the inherited corpus for the next version) and crashing inputs. |
+
+## libxml2
+
+```bash
+./targets/libxml2/build.sh 2.14.6   # clones libxml2 into targets/libxml2/repo on first use
+```
+
+This writes `targets/libxml2/build/2.14.6/`: `fredbear`, `xml.dict` and `seeds/`. The build:
+- uses libxml2's own OSS-Fuzz `xml` target (`fuzz/xml.c` plus `fuzz/fuzz.c`);
+- configures the library as the tag's `fuzz/oss-fuzz-build.sh` does (static, no HTTP or Python,
+  with zlib), except `--without-lzma` because FarmShare has no liblzma headers;
+- instruments the library and the harness with SanitizerCoverage;
+- generates seeds with the tag's own `fuzz/genSeed` from its test files, using the
+  `XML_SEED_CORPUS_SRC` list in `fuzz/Makefile.am`, as OSS-Fuzz does (366 seeds for 2.14.6 and
+  2.15.0).
+
+It needs autotools, clang and zlib, and takes about 40 s on 8 CPUs.
+
+Things to know about this harness:
+- **Inputs are not plain XML.** `genSeed` writes a small serialized format: 4-byte parser
+  options, a 4-byte allocation-failure position and a 4-byte push-parser chunk size, followed by
+  the document and any entities it loads. So the input chooses parser modes, and also when a
+  `malloc` should fail.
+- **`LLVMFuzzerInitialize` must run first.** fredbear calls it through
+  `targets/harness_shim.c`, which every `libharness.a` now includes; libpng's build adds it too.
+- **The harness's custom mutator is not used.** libFuzzer would use `LLVMFuzzerCustomMutator`,
+  which mutates the 4-byte header fields separately. fredbear uses its own 9 families for every
+  target, so the shim just stubs the `LLVMFuzzerMutate` symbol that the custom mutator needs to
+  link.
+
+**Transitions with an identical harness.** `fuzz/xml.c`, `fuzz/fuzz.c`, `fuzz/fuzz.h` and
+`fuzz/xml.dict` change only at the minor releases 2.11.0, 2.12.0, 2.13.0 and 2.14.0, and not at
+2.15.0. Changed lines below are all library `.c` changes, unfiltered:
+
+| Transition | Changed `.c` lines |
+|---|---|
+| 2.14.4 → 2.14.5 | 139 |
+| 2.14.2 → 2.14.3 | 328 |
+| 2.15.1 → 2.15.2 | 682 |
+| 2.14.6 → 2.15.0 | about 46,600 |
+
+**First numbers (Nov 17, 2026, a 60 s uniform run on 2.14.6):** edges 3,770 at t=0 (seeds) and
+5,533 at 60 s, still climbing quickly. About 2.1k executions per second, roughly 25× slower per
+execution than libpng.
+
+## Measuring a main run
+
+These scripts are used for the libxml2 main runs (`docs/RESULTS.md`, sections 6 and 7):
+
+| Script | Does |
+|---|---|
+| `scripts/inherited.sh <old version>` | Lists the union of the three base runs' queues as `runs/xml/inherited-<old>.names` and `.paths` |
+| `[OLD=2.14.5 NEW=2.14.6] scripts/xml-tasks.sh <root> <secs> "<seeds>" <policies...>` | Prints one trial command per line for the transition OLD → NEW (default 2.14.6 → 2.15.0), for `slurm/pack.sbatch` |
+| `scripts/run-trial.sh <out> <inherited names> <fredbear command>` | Runs a trial in node-local `$TMPDIR`, then keeps only the results and the trial's new inputs (`new/`), with `/usr/bin/time -v` in `time.txt` |
+| `targets/libxml2/build-cov.sh <version>` | Builds the same harness with Clang source coverage plus `targets/replay_main.c` into `build/<version>-cov/replay` |
+| `scripts/coverage.py` | Replays inherited and new inputs on that build and writes branch, line, region and function coverage at chosen times (`coverage-llvm.csv`) |
+| `scripts/analyze.py <root>` | Summarises branches, edges and new inputs per policy, with Mann–Whitney, A12 and Holm |
+
+fredbear writes `start_epoch`, the wall-clock time when fuzzing starts after the corpus loads, so
+new inputs can be placed on the same clock as `coverage.csv` by their mtimes.
 
 ## libpng
 
@@ -70,7 +143,7 @@ To reproduce the numbers (from `targets/libpng/repo`; `a`/`b` are tags like `v1.
 git diff -U0 -w $a $b -- png.c pngrutil.c pngrtran.c pngread.c pngset.c pngtrans.c pngrio.c pngmem.c pngerror.c pngget.c | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' | grep -vE '1\.6\.[0-9]+|[Cc]opyright|^[+-][[:space:]]*(/?\*|//)|^[+-][[:space:]]*$' | wc -l
 ```
 
-1.6.47 has not been built with `build.sh` yet.
+All five versions above build on macOS and Linux (FarmShare).
 
 **First numbers (Nov 13, 2026, one 2-minute base run on 1.6.45; indicative only):**
 - About 120k executions per second.

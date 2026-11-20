@@ -27,13 +27,23 @@ use libafl_bolts::ToSlice;
 use libafl_bolts::rands::StdRand;
 use libafl_bolts::tuples::tuple_list;
 
-use fredbear::mutator::{FAMILIES, FamilyMutator, base_counts_from_log};
+use fredbear::mutator::{FAMILIES, FamilyMutator, base_counts_in_window};
 use fredbear::policy::{Policy, PolicyConfig, PolicyKind, PriorSet};
 use fredbear::toy;
 
 #[cfg(harness)]
 unsafe extern "C" {
     fn LLVMFuzzerTestOneInput(data: *const u8, size: usize) -> i32;
+    /// From targets/harness_shim.c: calls LLVMFuzzerInitialize if the harness defines one.
+    fn fredbear_harness_init();
+}
+
+/// One-time harness setup, as libFuzzer does before the first input.
+fn init_harness() {
+    #[cfg(harness)]
+    unsafe {
+        fredbear_harness_init();
+    }
 }
 
 /// The libFuzzer-style harness linked in by build.rs (FREDBEAR_HARNESS).
@@ -51,12 +61,17 @@ struct Args {
     target: String,
     #[arg(long, value_enum)]
     policy: PolicyKind,
-    /// batches.jsonl from a uniform base run on the previous version; builds the priors.
-    #[arg(long)]
-    base_log: Option<PathBuf>,
+    /// batches.jsonl from uniform base runs on the previous version; builds the priors. Several
+    /// files (one flag with several paths, or the flag repeated) are pooled by summing counts.
+    #[arg(long, num_args = 1..)]
+    base_log: Vec<PathBuf>,
     /// Only base-run batches before this many seconds feed the prior (PLAN section 3: first hour).
     #[arg(long, default_value_t = 3600.0)]
     base_cutoff: f64,
+    /// Only base-run batches after this many seconds feed the prior (0: from the start). Use it to
+    /// build the prior from the late, mature-corpus phase of the base runs.
+    #[arg(long, default_value_t = 0.0)]
+    base_from: f64,
     /// N: the most new-version observations the old evidence is worth, per family.
     #[arg(long, default_value_t = 5000.0)]
     cap_n: f64,
@@ -68,9 +83,10 @@ struct Args {
     /// DTS only: per-batch decay of the observed counts (1 = no decay).
     #[arg(long, default_value_t = 1.0)]
     gamma_data: f64,
-    /// Initial corpus directory (the inherited corpus on version v+1).
-    #[arg(long)]
-    corpus: Option<PathBuf>,
+    /// Initial corpus directories (the inherited corpus on version v+1). Several directories are
+    /// loaded in the order given; inputs that add no coverage over earlier ones are kept disabled.
+    #[arg(long, num_args = 1..)]
+    corpus: Vec<PathBuf>,
     /// Dictionary in AFL format.
     #[arg(long)]
     dict: Option<PathBuf>,
@@ -85,22 +101,21 @@ struct Args {
 fn main() -> Result<(), Error> {
     let args = Args::parse();
     let needs_prior = !matches!(args.policy, PolicyKind::Uniform | PolicyKind::Fresh);
-    if needs_prior && args.base_log.is_none() {
+    if needs_prior && args.base_log.is_empty() {
         return Err(Error::illegal_argument(format!("--policy {:?} needs --base-log", args.policy)));
     }
-    let priors = match &args.base_log {
-        Some(path) if needs_prior => {
-            let base = base_counts_from_log(path, args.base_cutoff).map_err(Error::illegal_argument)?;
-            base.validate(&FAMILIES).map_err(Error::illegal_argument)?;
-            PriorSet::build(&base, args.cap_n, args.seed)
-        }
-        _ => PriorSet::flat(FAMILIES.len()),
+    let priors = if needs_prior {
+        let base = base_counts_in_window(&args.base_log, args.base_from, args.base_cutoff).map_err(Error::illegal_argument)?;
+        base.validate(&FAMILIES).map_err(Error::illegal_argument)?;
+        PriorSet::build(&base, args.cap_n, args.seed)
+    } else {
+        PriorSet::flat(FAMILIES.len())
     };
     let real = args.target == "harness";
     if real && !cfg!(harness) {
         return Err(Error::illegal_argument("this binary has no harness; build it with targets/libpng/build.sh"));
     }
-    if real && args.corpus.is_none() {
+    if real && args.corpus.is_empty() {
         return Err(Error::illegal_argument("--target harness needs --corpus (seeds or an inherited corpus)"));
     }
     if fs::exists(&args.out)? {
@@ -144,14 +159,20 @@ fn main() -> Result<(), Error> {
         .event_mgr(&mut mgr)
         .build()?;
 
-    match &args.corpus {
-        Some(dir) => state.load_initial_inputs(&mut fuzzer, &mut executor, &mut mgr, &[dir.clone()])?,
-        None => {
-            fuzzer.add_input(&mut state, &mut executor, &mut mgr, BytesInput::new(b"FRED".to_vec()))?;
-        }
+    if real {
+        init_harness();
+    }
+    if args.corpus.is_empty() {
+        fuzzer.add_input(&mut state, &mut executor, &mut mgr, BytesInput::new(b"FRED".to_vec()))?;
+    } else {
+        state.load_initial_inputs(&mut fuzzer, &mut executor, &mut mgr, &args.corpus)?;
     }
 
     let start = Instant::now();
+    // Wall-clock time when fuzzing starts (after the corpus has loaded): t = 0 in coverage.csv.
+    // Lets scripts/coverage.py place each new queue/ input on the same clock by its mtime.
+    let epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    fs::write(args.out.join("start_epoch"), format!("{:.6}\n", epoch.as_secs_f64()))?;
     let cfg = PolicyConfig {
         kind: args.policy,
         batch: args.batch,
